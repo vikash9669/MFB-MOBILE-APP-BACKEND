@@ -1,0 +1,21 @@
+{
+  "name": "mfb-mobile-app-backend",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "start": "nodemon app.js",
+    "lint": "eslint ./"
+  },
+  "dependencies": {
+    "express": "~4.16.1",
+    "mysql2": "^3.9.9",
+    "sequelize": "^6.37.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.3.0",
+    "eslint": "^9.3.0",
+    "globals": "^15.3.0",
+    "nodemon": "^3.1.2",
+    "sequelize-auto": "^0.8.8"
+  }
+}
