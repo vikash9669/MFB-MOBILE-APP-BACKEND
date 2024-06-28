@@ -1,8 +1,8 @@
 const Sequelize = require("sequelize").Sequelize;
 
-const sequelize = new Sequelize("MFB", "root", "root@123", {
-  host: "localhost",
-  dialect: "mysql",
+const sequelize = new Sequelize("myfirstbite", "root", "#Wishes12", {
+    host: "localhost",
+    dialect: "mysql",
 });
 
 module.exports = sequelize;
