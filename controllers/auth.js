@@ -84,7 +84,9 @@ exports.verifyOtp = async (req, res) => {
     });
     if (user != null) {
       if (user.user_otp === user_otp) {
-        const token = jwt.sign(user.toJSON(), process.env.JWT_SECRET_KEY);
+        const token = jwt.sign(user.toJSON(), process.env.JWT_SECRET_KEY, {
+          expiresIn: "365d",
+        });
         res.json({
           message: "OTP verified successfully",
           token,

@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 exports.verifyToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
+  console.log("MFB-logs ~ token:", token)
 
   if (!token) {
     return res

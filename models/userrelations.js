@@ -6,8 +6,7 @@ const StoreUsersBusiness = require('./business');
 StoreOrders.hasMany(StoreOrderDetails, { foreignKey: 'order_id' });
 StoreOrderDetails.belongsTo(StoreOrders, { foreignKey: 'order_id' });
 
-StoreOrderDetails.belongsTo(StoreProducts, { foreignKey: 'product_id' });
-StoreProducts.hasMany(StoreOrderDetails, { foreignKey: 'product_id' });
+StoreProducts.belongsTo(StoreOrderDetails, { foreignKey: 'product_id' });
 
 StoreOrders.belongsTo(StoreUsersBusiness, { foreignKey: 'vendor_id', targetKey: 'user_id' });
 
