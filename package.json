@@ -3,11 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "start": "nodemon app.js",
+    "start": "nodemon --env-file=.env app.js",
     "lint": "eslint ./"
   },
   "dependencies": {
     "express": "~4.16.1",
+    "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.9.9",
     "sequelize": "^6.37.3"
   },
