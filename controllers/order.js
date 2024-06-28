@@ -42,6 +42,7 @@ const getOrdersByCustomerId = async (req, res) => {
             "product_id",
             "product_qty",
             "product_mrp",
+            // "product_name",
             "product_price",
             "product_discount",
             "product_total",
@@ -58,7 +59,6 @@ const getOrdersByCustomerId = async (req, res) => {
         },
       ],
     });
-
     res.status(200).json({ orders });
   } catch (error) {
     console.error(error);
