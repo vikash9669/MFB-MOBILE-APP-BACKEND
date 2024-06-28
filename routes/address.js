@@ -6,7 +6,7 @@ const router = express.Router();
 
 router.post("/address", verifyToken, addressController.createAddress);
 
-router.get("/address/:user_id", verifyToken, addressController.findAllByUser);
+router.get("/address", verifyToken, addressController.findAllByUser);
 
 router.put(
   "/address/:delivery_id",

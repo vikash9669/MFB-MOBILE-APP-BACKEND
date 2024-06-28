@@ -14,8 +14,5 @@ router.get('/menu/:businessId', productController.getBusinessByMenuId);
 
 router.get("/products", productController.getProducts);
 
-// router.post("/createorder", productController.createOrder)
-// router.get('/user/:userId/orders', productController.getUserOrders);
-
 
 module.exports = router;
