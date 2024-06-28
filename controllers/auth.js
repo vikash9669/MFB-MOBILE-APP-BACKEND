@@ -50,7 +50,7 @@ exports.getOtp = async (req, res) => {
 };
 
 exports.updateUser = async (req, res) => {
-  const { user_id } = req.params;
+  const { user_id } = req.user;
   const { user_name, user_email, user_password } = req.body;
 
   try {
