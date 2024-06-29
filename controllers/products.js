@@ -49,6 +49,9 @@ const getProducts = async (req, res) => {
 const getMenu = async (req, res) => {
   try {
     const stores = await Restaurants.findAll({
+      where: {
+        business_status: true,
+      },
       attributes: [
         "business_id",
         "user_id",
@@ -94,12 +97,10 @@ const getMenu = async (req, res) => {
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
-    res
-      .status(500)
-      .json({
-        message:
-          "An error occurred while fetching unique menu names with store details",
-      });
+    res.status(500).json({
+      message:
+        "An error occurred while fetching unique menu names with store details",
+    });
   }
 };
 
@@ -150,17 +151,18 @@ const getBusinessByMenuId = async (req, res) => {
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
-    res
-      .status(500)
-      .json({
-        message: "An error occurred while fetching business details by menu id",
-      });
+    res.status(500).json({
+      message: "An error occurred while fetching business details by menu id",
+    });
   }
 };
 
 const getMenuForBusinesses = async (req, res) => {
   try {
     const businesses = await Restaurants.findAll({
+      where: {
+        business_status: true,
+      },
       attributes: [
         "business_id",
         "user_id",
@@ -212,11 +214,9 @@ const getMenuForBusinesses = async (req, res) => {
     res.status(200).json(response);
   } catch (error) {
     console.error(error);
-    res
-      .status(500)
-      .json({
-        message: "An error occurred while fetching menus for businesses",
-      });
+    res.status(500).json({
+      message: "An error occurred while fetching menus for businesses",
+    });
   }
 };
 
