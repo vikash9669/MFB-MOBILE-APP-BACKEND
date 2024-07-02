@@ -75,8 +75,6 @@ exports.updateUser = async (req, res) => {
 exports.verifyOtp = async (req, res) => {
   try {
     const { phone_number, user_otp } = req.body;
-    console.log("MFB-logs ~ exports.verifyOtp= ~ user_otp:", user_otp);
-    console.log("MFB-logs ~ exports.verifyOtp= ~ phone_number:", phone_number);
     const user = await User.findOne({
       where: {
         user_phone: phone_number,
