@@ -298,7 +298,12 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
         include: {
           model: StoreProducts,
           as: "products",
-          attributes: ["product_id", "product_name", "product_mrp"],
+          attributes: [
+            "product_id",
+            "product_name",
+            "product_mrp",
+            "product_image",
+          ],
         },
       },
     });
@@ -317,6 +322,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
           product_id: product.product_id,
           product_name: product.product_name,
           product_mrp: product.product_mrp,
+          product_image: product.product_image,
         })),
       })),
     };

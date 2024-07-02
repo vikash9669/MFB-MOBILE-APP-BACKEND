@@ -9,7 +9,7 @@ router.get("/restaurant", productController.getMenuForBusinesses);
 router.get('/restaurant/:restaurantId', productController.getRestaurantDetailsByRestaurantId);
 
 
-router.get("/menu", productController.getMenu);
+// router.get("/menu", productController.getMenu);
 router.get('/menu/:businessId', productController.getBusinessByMenuId);
 
 router.get("/products", productController.getProducts);
