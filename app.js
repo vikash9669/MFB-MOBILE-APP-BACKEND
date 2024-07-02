@@ -18,7 +18,7 @@ app.use("/", addressRoutes);
 sequelize
   .sync({ logging: false })
   .then(async () => {
-    app.listen(3000);
+    app.listen(8080);
   })
   .catch((err) => {
     console.log(err);
