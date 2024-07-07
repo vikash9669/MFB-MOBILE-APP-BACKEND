@@ -1,17 +1,9 @@
-const StoreProducts = require("../models/product");
-const Restaurants = require("../models/business");
-const Menu = require("../models/menu");
-
-const {
-  StoreName,
-  StoreMenu,
-  StoreItems,
-} = require("../models/menu-relations");
+const { Product, Business, Menu, User } = require("../models/index");
 const { Op } = require("sequelize");
 
 const getRestaurants = async (req, res) => {
   try {
-    const restaurants = await Restaurants.findAll({
+    const restaurants = await Business.findAll({
       attributes: [
         "business_id",
         "user_id",
@@ -34,7 +26,7 @@ const getRestaurants = async (req, res) => {
 
 const getProducts = async (req, res) => {
   try {
-    const products = await StoreProducts.findAll({
+    const products = await Product.findAll({
       attributes: ["product_name", "product_id", "product_user_id"],
     });
     res.status(200).json(products);
@@ -48,7 +40,7 @@ const getProducts = async (req, res) => {
 
 const getMenu = async (req, res) => {
   try {
-    const stores = await Restaurants.findAll({
+    const stores = await Business.findAll({
       where: {
         business_status: true,
       },
@@ -108,7 +100,7 @@ const getBusinessByMenuId = async (req, res) => {
   const { businessId } = req.params;
 
   try {
-    const stores = await Restaurants.findAll({
+    const stores = await Business.findAll({
       where: {
         business_id: businessId,
       },
@@ -157,11 +149,16 @@ const getBusinessByMenuId = async (req, res) => {
   }
 };
 
-const getMenuForBusinesses = async (req, res) => {
+const getRestaurantsList = async (req, res) => {
   try {
-    const businesses = await Restaurants.findAll({
+    const businesses = await Business.findAll({
       where: {
         business_status: true,
+      },
+      include: {
+        model: User,
+        as: "user",
+        attributes: ["user_id", "user_image", "user_name"],
       },
       attributes: [
         "business_id",
@@ -206,6 +203,7 @@ const getMenuForBusinesses = async (req, res) => {
           menu_id: menu.menu_id,
           menu_name: menu.menu_name,
         })),
+        user: business.user,
       };
 
       response.push(businessData);
@@ -224,10 +222,10 @@ const getProductNamesByMenuUserId = async (req, res) => {
   const { menu_user_id } = req.params;
 
   try {
-    const products = await StoreMenu.findOne({
+    const products = await Menu.findOne({
       where: { menu_user_id: menu_user_id },
       include: {
-        model: StoreItems,
+        model: Product,
         as: "products",
         attributes: ["product_id", "product_name", "product_user_id"],
       },
@@ -256,12 +254,12 @@ const getProductsByMenuId = async (req, res) => {
   const { menuId } = req.params;
 
   try {
-    const menu = await StoreMenu.findOne({
+    const menu = await Menu.findOne({
       where: {
         menu_id: menuId,
       },
       include: {
-        model: StoreProducts,
+        model: Product,
         as: "products",
         attributes: ["product_id", "product_name", "product_mrp"],
       },
@@ -289,14 +287,14 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
   const { restaurantId } = req.params;
 
   try {
-    const business = await StoreName.findOne({
+    const business = await Business.findOne({
       where: { user_id: restaurantId },
       include: {
-        model: StoreMenu,
+        model: Menu,
         as: "menus",
         attributes: ["menu_id", "menu_name", "menu_user_id"],
         include: {
-          model: StoreProducts,
+          model: Product,
           as: "products",
           attributes: [
             "product_id",
@@ -340,10 +338,10 @@ const getMenuNamesByUserId = async (req, res) => {
   const { userId } = req.params;
   try {
     // Fetch the business to verify it exists
-    const business = await StoreName.findOne({
+    const business = await Business.findOne({
       where: { user_id: userId },
       include: {
-        model: StoreMenu,
+        model: Menu,
         as: "menus",
         attributes: ["menu_id", "menu_name", "menu_user_id"],
       },
@@ -376,6 +374,6 @@ module.exports = {
   getBusinessByMenuId,
   getProductNamesByMenuUserId,
   getProductsByMenuId,
-  getMenuForBusinesses,
+  getRestaurantsList,
   getRestaurantDetailsByRestaurantId,
 };

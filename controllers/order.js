@@ -1,9 +1,9 @@
 const {
   StoreOrders,
   StoreOrderDetails,
-  StoreProducts,
-  StoreUsersBusiness,
-} = require("../models/userrelations");
+  Product,
+  Business,
+} = require("../models");
 
 const getOrdersByCustomerId = async (req, res) => {
   const { user_id } = req.user;
@@ -49,13 +49,13 @@ const getOrdersByCustomerId = async (req, res) => {
             "product_available",
           ],
           include: {
-            model: StoreProducts,
+            model: Product,
             attributes: ["product_name"],
           },
         },
         {
-          model: StoreUsersBusiness,
-          attributes: ["business_name"],
+          model: Business,
+          attributes: ["business_name", "user_id"],
         },
       ],
     });
@@ -75,7 +75,7 @@ const createOrder = async (req, res) => {
   try {
     let orderAmount = 0;
     for (const product of products) {
-      const productDetails = await StoreProducts.findByPk(product.product_id);
+      const productDetails = await Product.findByPk(product.product_id);
       if (productDetails) {
         orderAmount += productDetails.product_mrp * product.product_qty;
       }
@@ -98,7 +98,7 @@ const createOrder = async (req, res) => {
     });
 
     for (const product of products) {
-      const productDetails = await StoreProducts.findByPk(product.product_id);
+      const productDetails = await Product.findByPk(product.product_id);
       if (productDetails) {
         await StoreOrderDetails.create({
           order_id: newOrder.order_id,
