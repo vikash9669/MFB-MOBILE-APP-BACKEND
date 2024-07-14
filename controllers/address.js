@@ -1,24 +1,24 @@
-const Address = require("../models/store_users_shipping_address");
+const { Location, Address } = require("../models");
 
 const createAddress = async (req, res) => {
-    try {
-     
-      const addressData = {
-        ...req.body,
-        customer_id: req.user.user_id,
-      };
-  
-      const address = await Address.create(addressData);
-      res.status(201).json(address);
-    } catch (error) {
-      res.status(400).json({ error: error.message });
-    }
-  };
+  try {
+    const addressData = {
+      ...req.body,
+      customer_id: req.user.user_id,
+    };
+
+    const address = await Address.create(addressData);
+    res.status(201).json(address);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
 
 const findAllByUser = async (req, res) => {
   try {
     const addresses = await Address.findAll({
       where: { customer_id: req.user.user_id },
+      include: [{ model: Location, as: "location" }],
     });
     res.status(200).json(addresses);
   } catch (error) {

@@ -1,8 +1,11 @@
+const { Op } = require("sequelize");
 const {
   StoreOrders,
   StoreOrderDetails,
   Product,
   Business,
+  Address,
+  Area,
 } = require("../models");
 
 const getOrdersByCustomerId = async (req, res) => {
@@ -70,47 +73,66 @@ const getOrdersByCustomerId = async (req, res) => {
 
 const createOrder = async (req, res) => {
   const { user_id } = req.user;
-  const { address_id, rider_id, products } = req.body;
+  const { address_id, product_ids_with_quantity, business_user_id } = req.body;
+  const product_ids = Object.keys(product_ids_with_quantity);
 
   try {
-    let orderAmount = 0;
-    for (const product of products) {
-      const productDetails = await Product.findByPk(product.product_id);
-      if (productDetails) {
-        orderAmount += productDetails.product_mrp * product.product_qty;
-      }
-    }
+    const productDetails = await Product.findAll({
+      where: {
+        product_id: product_ids,
+      },
+    });
+
+    const address = await Address.findByPk(address_id);
+
+    const areaDetails = await Area.findOne({
+      where: {
+        [Op.and]: [
+          { area_id: address.delivery_city },
+          { area_user_id: business_user_id },
+        ],
+      },
+    });
+
+    const orderAmount = productDetails.reduce((prev, curr) => {
+      return (
+        prev + curr.product_mrp * product_ids_with_quantity[curr.product_id]
+      );
+    }, 0);
+
+    const delivery_charges =
+      orderAmount >= areaDetails.area_charge_free ? 0 : areaDetails.area_charge;
 
     const newOrder = await StoreOrders.create({
       customer_id: user_id,
-      vendor_id: products[0].product_user_id,
+      vendor_id: business_user_id,
       address_id,
-      rider_id,
+      rider_id: 1,
       vendor_discount: 0,
-      order_amount: orderAmount,
+      order_amount: orderAmount + delivery_charges,
       order_payment_type: "COD",
       order_transaction_id: "CASH",
       order_payment_status: 1,
       order_payment_received: 0,
       order_received_time: new Date(),
-      order_status: 1,
+      order_status: 0,
       order_updated_by: user_id,
+      delivery_charges,
+      order_discount: 0,
     });
 
-    for (const product of products) {
-      const productDetails = await Product.findByPk(product.product_id);
-      if (productDetails) {
-        await StoreOrderDetails.create({
-          order_id: newOrder.order_id,
-          product_id: product.product_id,
-          product_qty: product.product_qty,
-          product_mrp: productDetails.product_mrp,
-          product_price: productDetails.product_price,
-          product_discount: 0,
-          product_total: productDetails.product_mrp * product.product_qty,
-          product_available: productDetails.product_status === 1,
-        });
-      }
+    for (const product of productDetails) {
+      const product_qty = product_ids_with_quantity[product.product_id];
+      await StoreOrderDetails.create({
+        order_id: newOrder.order_id,
+        product_id: product.product_id,
+        product_qty,
+        product_mrp: product.product_mrp,
+        product_price: 0,
+        product_discount: 0,
+        product_total: product.product_mrp * product_qty,
+        product_available: 1,
+      });
     }
 
     res

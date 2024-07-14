@@ -4,6 +4,44 @@ const User = require("../models/user");
 const { generateOtp } = require("../util/auth");
 const { generateUserCode } = require("../util/user");
 
+const sendOtp = async (phoneNumber, otp) => {
+  const apiUrl = "https://www.bulksmsplans.com/api/send_sms";
+  const apiId = process.env.SMS_SERVICE_API_ID; // Your API Id
+  const apiPassword = process.env.SMS_SERVICE_PASSWORD; // Your API Password
+  const smsType = "OTP"; // SMS Type
+  const smsEncoding = 1; // SMS Encoding (1 for Text)
+  const senderId = process.env.SMS_SERVICE_SENDER_ID; // Your Sender ID
+
+  const message = `Welcome to My First Bite. ${otp} is your OTP.Do not share this OTP with anyone.`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        api_id: apiId,
+        api_password: apiPassword,
+        sms_type: smsType,
+        sms_encoding: smsEncoding,
+        sender: senderId,
+        number: phoneNumber,
+        message: message,
+        template_id: 151011,
+      }),
+    });
+
+    const data = await response.json();
+    console.log("Response from BulkSMSPlans:", data);
+
+    console.log(data);
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    throw error;
+  }
+};
+
 exports.getOtp = async (req, res) => {
   try {
     const { phone_number } = req.body;
@@ -14,6 +52,7 @@ exports.getOtp = async (req, res) => {
     });
     if (user != null) {
       const otp = generateOtp();
+      await sendOtp(phone_number, otp);
       await User.update(
         { user_otp: otp },
         {

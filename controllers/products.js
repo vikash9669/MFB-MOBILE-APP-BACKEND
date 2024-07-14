@@ -1,4 +1,11 @@
-const { Product, Business, Menu, User } = require("../models/index");
+const {
+  Product,
+  Business,
+  Menu,
+  User,
+  Area,
+  Location,
+} = require("../models/index");
 const { Op } = require("sequelize");
 
 const getRestaurants = async (req, res) => {
@@ -155,11 +162,13 @@ const getRestaurantsList = async (req, res) => {
       where: {
         business_status: true,
       },
-      include: {
-        model: User,
-        as: "user",
-        attributes: ["user_id", "user_image", "user_name"],
-      },
+      include: [
+        {
+          model: User,
+          as: "user",
+          attributes: ["user_id", "user_image", "user_name"],
+        },
+      ],
       attributes: [
         "business_id",
         "user_id",
@@ -190,6 +199,26 @@ const getRestaurantsList = async (req, res) => {
         },
       });
 
+      const areas = await Area.findAll({
+        attributes: [
+          "area_id",
+          "area_checkout",
+          "area_charge",
+          "area_charge_free",
+          "area_status",
+          "area_user_id",
+        ],
+        where: {
+          area_user_id: business.user_id,
+        },
+        include: [
+          {
+            model: Location,
+            as: "location",
+          },
+        ],
+      });
+
       const businessData = {
         business_id: business.business_id,
         user_id: business.user_id,
@@ -204,6 +233,7 @@ const getRestaurantsList = async (req, res) => {
           menu_name: menu.menu_name,
         })),
         user: business.user,
+        areas,
       };
 
       response.push(businessData);

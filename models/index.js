@@ -7,6 +7,9 @@ const StoreOrderLogs = require("./store_orders_log");
 const StoreOrders = require("./store_orders");
 const StoreUserShippingAddress = require("./store_users_shipping_address");
 const User = require("./user");
+const Area = require("./area");
+const Location = require("./location");
+const Address = require("./store_users_shipping_address");
 
 Business.hasMany(Menu, {
   foreignKey: "menu_user_id",
@@ -54,6 +57,37 @@ StoreOrders.belongsTo(Business, {
   targetKey: "user_id",
 });
 
+Area.belongsTo(User, {
+  as: "user",
+  foreignKey: "area_user_id",
+  targetKey: "user_id",
+});
+
+User.hasMany(Area, {
+  foreignKey: "area_user_id",
+  as: "areas",
+});
+
+Area.belongsTo(Location, {
+  as: "location",
+  foreignKey: "area_id",
+  targetKey: "location_id",
+});
+
+Location.hasMany(Area, {
+  foreignKey: "area_id",
+});
+
+Address.belongsTo(Location, {
+  as: "location",
+  foreignKey: "delivery_city",
+  targetKey: "location_id",
+});
+
+Location.hasMany(Address, {
+  foreignKey: "delivery_city",
+});
+
 module.exports = {
   User,
   Product,
@@ -64,4 +98,7 @@ module.exports = {
   StoreOrderDetails,
   StoreOrderLogs,
   StoreUserShippingAddress,
+  Area,
+  Location,
+  Address,
 };
