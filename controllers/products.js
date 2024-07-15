@@ -325,6 +325,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
         attributes: ["menu_id", "menu_name", "menu_user_id"],
         include: {
           model: Product,
+          where: { product_status: 1 },
           as: "products",
           attributes: [
             "product_id",

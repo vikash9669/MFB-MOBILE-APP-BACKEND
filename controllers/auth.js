@@ -33,9 +33,7 @@ const sendOtp = async (phoneNumber, otp) => {
     });
 
     const data = await response.json();
-    console.log("Response from BulkSMSPlans:", data);
-
-    console.log(data);
+    return data;
   } catch (error) {
     console.error("Error sending OTP:", error);
     throw error;
