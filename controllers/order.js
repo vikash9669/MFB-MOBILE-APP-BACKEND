@@ -110,7 +110,7 @@ const createOrder = async (req, res) => {
       address_id,
       rider_id: 1,
       vendor_discount: 0,
-      order_amount: orderAmount + delivery_charges,
+      order_amount: orderAmount,
       order_payment_type: "COD",
       order_transaction_id: "CASH",
       order_payment_status: 1,
