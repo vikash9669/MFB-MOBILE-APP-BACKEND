@@ -37,6 +37,7 @@ const getOrdersByCustomerId = async (req, res) => {
       where: {
         customer_id: user_id,
       },
+      order: [["order_received_time", "DESC"]],
       include: [
         {
           model: StoreOrderDetails,
