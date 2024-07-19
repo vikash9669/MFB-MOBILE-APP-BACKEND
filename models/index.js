@@ -88,6 +88,16 @@ Location.hasMany(Address, {
   foreignKey: "delivery_city",
 });
 
+StoreOrders.belongsTo(Address, {
+  as: 'address',
+  foreignKey: "address_id",
+  targetKey: "delivery_id",
+});
+
+Address.hasMany(StoreOrders, {
+  foreignKey: "address_id",
+});
+
 module.exports = {
   User,
   Product,

@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 const { generateOtp } = require("../util/auth");
 const { generateUserCode } = require("../util/user");
+const { StoreOrders, Address } = require("../models");
 
 const sendOtp = async (phoneNumber, otp) => {
   const apiUrl = "https://www.bulksmsplans.com/api/send_sms";
@@ -63,6 +64,7 @@ exports.getOtp = async (req, res) => {
       return;
     }
     const otp = generateOtp();
+    await sendOtp(phone_number, otp);
     const newUser = await User.create({
       user_phone: phone_number,
       user_name: "",
@@ -116,16 +118,46 @@ exports.verifyOtp = async (req, res) => {
       where: {
         user_phone: phone_number,
       },
+      attributes: [
+        "user_otp",
+        "user_id",
+        "user_name",
+        "user_email",
+        "user_phone",
+        "user_phone_1",
+      ],
     });
     if (user != null) {
       if (user.user_otp === user_otp) {
+        const { user_id, user_name, user_email, user_phone, user_phone_1 } =
+          user;
         const token = jwt.sign(user.toJSON(), process.env.JWT_SECRET_KEY, {
           expiresIn: "365d",
+        });
+        const lastOrder = await StoreOrders.findOne({
+          where: {
+            customer_id: user.user_id,
+          },
+          order: [["order_received_time", "DESC"]],
+          attributes: ["order_id"],
+          include: [
+            {
+              model: Address,
+              as: "address",
+            },
+          ],
         });
         res.json({
           message: "OTP verified successfully",
           token,
-          user,
+          user: {
+            lastOrderAddress: lastOrder.address,
+            user_id,
+            user_name,
+            user_email,
+            user_phone,
+            user_phone_1,
+          },
         });
         return;
       }
