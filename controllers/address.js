@@ -76,13 +76,11 @@ const deleteAddress = async (req, res) => {
   const { delivery_id } = req.params;
 
   try {
-    const address = await Address.findByPk(delivery_id);
-
-    if (!address) {
-      return res.status(404).json({ error: "Address not found" });
-    }
-
-    await address.destroy();
+    await Address.destroy({
+      where: {
+        delivery_id,
+      },
+    });
 
     res.status(200).json({ message: "Address deleted successfully" });
   } catch (error) {
