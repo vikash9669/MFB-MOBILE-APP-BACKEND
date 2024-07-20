@@ -6,10 +6,17 @@ const createAddress = async (req, res) => {
     const addressData = {
       ...req.body,
       customer_id: req.user.user_id,
+      delivery_pin: 312601,
+      delivery_state: 29,
+      delivery_status: 1,
     };
 
     const address = await Address.create(addressData);
-    res.status(201).json(address);
+    const newAddress = await Address.findOne({
+      where: { delivery_id: address.delivery_id },
+      include: [{ model: Location, as: "location" }],
+    });
+    res.status(201).json(newAddress);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
