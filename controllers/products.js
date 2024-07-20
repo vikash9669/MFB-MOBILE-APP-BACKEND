@@ -79,7 +79,7 @@ const getMenu = async (req, res) => {
 
     const uniqueMenuIds = [...menuStoreMap.keys()];
     const menuItems = await Menu.findAll({
-      attributes: ["menu_id", "menu_name", "menu_user_id"],
+      attributes: ["menu_id", "menu_name", "menu_user_id", 'menu_slug'],
       where: {
         menu_id: {
           [Op.in]: uniqueMenuIds,
@@ -90,6 +90,7 @@ const getMenu = async (req, res) => {
     const result = menuItems.map((menu) => ({
       menu_id: menu.menu_id,
       menu_name: menu.menu_name,
+      menu_slug: menu.menu_slug,
       business_names: menuStoreMap.get(menu.menu_id) || [],
     }));
 

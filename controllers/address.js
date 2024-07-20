@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const { Location, Address } = require("../models");
 
 const createAddress = async (req, res) => {
@@ -85,9 +86,28 @@ const deleteAddress = async (req, res) => {
   }
 };
 
+const getAllLocations = async (req, res) => {
+  try {
+    const locations = await Location.findAll({
+      where: {
+        location_pincode: {
+          [Op.not]: "000000",
+        },
+      },
+    });
+    res.json(locations);
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .json({ error: "An error occurred while fetching the locations" });
+  }
+};
+
 module.exports = {
   createAddress,
   findAllByUser,
   updateAddress,
   deleteAddress,
+  getAllLocations,
 };

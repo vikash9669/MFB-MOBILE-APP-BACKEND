@@ -20,4 +20,6 @@ router.delete(
   addressController.deleteAddress
 );
 
+router.get("/locations", verifyToken, addressController.getAllLocations);
+
 module.exports = router;
