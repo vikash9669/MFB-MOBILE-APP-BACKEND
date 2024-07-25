@@ -169,6 +169,7 @@ exports.verifyOtp = async (req, res) => {
         return;
       }
     }
+    res.status(401).json({ message: "Invalid OTP" });
   } catch (err) {
     console.log("MFB-error-logs ~ exports.verifyOtp= ~ err:", err);
     res.status(500).json({ message: "Otp verification failed", err });
