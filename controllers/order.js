@@ -7,6 +7,7 @@ const {
   Address,
   Area,
 } = require("../models");
+const { transporter } = require("../util/email");
 
 const getOrdersByCustomerId = async (req, res) => {
   const { user_id } = req.user;
@@ -135,6 +136,15 @@ const createOrder = async (req, res) => {
         product_available: 1,
       });
     }
+
+    await transporter.sendMail({
+      from: "myfirstbite.028@zohomail.in", // sender address
+      to: "jiteshkriplani0206@gmail.com", // list of receivers
+      subject: `MFB Order ID: ${newOrder.order_id}`, // Subject line
+      text: `Order Received from ${req.user.user_name}, Mobile no. ${
+        req.user.user_phone
+      } and order total value is ${orderAmount + delivery_charges}`, // plain text body
+    });
 
     res
       .status(201)
