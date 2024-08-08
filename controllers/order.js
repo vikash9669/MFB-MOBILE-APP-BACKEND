@@ -116,7 +116,6 @@ const createOrder = async (req, res) => {
       order_transaction_id: "CASH",
       order_payment_status: 1,
       order_payment_received: 0,
-      order_received_time: new Date(),
       order_status: 0,
       order_updated_by: user_id,
       delivery_charges,
