@@ -79,7 +79,7 @@ const getMenu = async (req, res) => {
 
     const uniqueMenuIds = [...menuStoreMap.keys()];
     const menuItems = await Menu.findAll({
-      attributes: ["menu_id", "menu_name", "menu_user_id", 'menu_slug'],
+      attributes: ["menu_id", "menu_name", "menu_user_id", "menu_slug"],
       where: {
         menu_id: {
           [Op.in]: uniqueMenuIds,
@@ -167,7 +167,7 @@ const getRestaurantsList = async (req, res) => {
         {
           model: User,
           as: "user",
-          attributes: ["user_id", "user_image", "user_name"],
+          attributes: ["user_id", "user_image", "user_name", "user_active"],
         },
       ],
       order: [["business_order", "ASC"]],
@@ -238,7 +238,9 @@ const getRestaurantsList = async (req, res) => {
         areas,
       };
 
-      response.push(businessData);
+      if (businessData.user.user_active) {
+        response.push(businessData);
+      }
     }
 
     res.status(200).json(response);
