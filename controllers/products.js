@@ -182,6 +182,7 @@ const getRestaurantsList = async (req, res) => {
         "business_discount",
         "business_slug",
         "business_menu_types",
+        "business_fssai",
       ],
     });
 
@@ -230,6 +231,7 @@ const getRestaurantsList = async (req, res) => {
         business_slug: business.business_slug,
         business_offer_text: business.business_offer_text,
         business_status: business.business_status,
+        business_fssai: business.business_fssai,
         menus: menuItems.map((menu) => ({
           menu_id: menu.menu_id,
           menu_name: menu.menu_name,
