@@ -90,22 +90,18 @@ exports.getOtp = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   const { user_id } = req.user;
-  const { user_name, user_email, user_password } = req.body;
+  const { user_name, user_email, user_phone, user_phone_1 } = req.body;
 
   try {
-    const [updated] = await User.update(
-      { user_name, user_email, user_password },
+    await User.update(
+      { user_name, user_email, user_phone, user_phone_1 },
       {
         where: { user_id },
       }
     );
 
-    if (updated) {
-      const updatedUser = await User.findByPk(user_id);
-      res.status(200).json({ user: updatedUser });
-    } else {
-      throw new Error("User not found");
-    }
+    const updatedUser = await User.findByPk(user_id);
+    res.status(200).json({ user: updatedUser });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
