@@ -145,9 +145,61 @@ const createOrder = async (req, res) => {
       } and order total value is ${orderAmount + delivery_charges}`, // plain text body
     });
 
+    const orderResponse = await StoreOrders.findOne({
+      attributes: [
+        "order_id",
+        "customer_id",
+        "vendor_id",
+        "address_id",
+        "rider_id",
+        "vendor_discount",
+        "order_amount",
+        "order_discount",
+        "delivery_charges",
+        "order_amount_paid",
+        "order_profit",
+        "order_payment_type",
+        "order_transaction_id",
+        "order_payment_status",
+        "order_payment_received",
+        "order_received_time",
+        "order_delivered_time",
+        "order_status",
+        "order_updated_by",
+      ],
+      where: {
+        order_id: newOrder.order_id,
+      },
+      order: [["order_received_time", "DESC"]],
+      include: [
+        {
+          model: StoreOrderDetails,
+          attributes: [
+            "order_detail_id",
+            "product_id",
+            "product_qty",
+            "product_mrp",
+            // "product_name",
+            "product_price",
+            "product_discount",
+            "product_total",
+            "product_available",
+          ],
+          include: {
+            model: Product,
+            attributes: ["product_name"],
+          },
+        },
+        {
+          model: Business,
+          attributes: ["business_name", "user_id"],
+        },
+      ],
+    });
+
     res
       .status(201)
-      .json({ message: "Order created successfully", order: newOrder });
+      .json({ message: "Order created successfully", order: orderResponse });
   } catch (error) {
     console.error(error);
     res
