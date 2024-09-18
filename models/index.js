@@ -52,6 +52,9 @@ StoreOrderDetails.belongsTo(StoreOrders, { foreignKey: "order_id" });
 StoreOrderDetails.belongsTo(Product, { foreignKey: "product_id" });
 Product.hasMany(StoreOrderDetails, { foreignKey: "product_id" });
 
+StoreOrderLogs.belongsTo(StoreOrders, { foreignKey: "order_id" });
+StoreOrders.hasMany(StoreOrderLogs, { foreignKey: "order_id" });
+
 StoreOrders.belongsTo(Business, {
   foreignKey: "vendor_id",
   targetKey: "user_id",
@@ -89,7 +92,7 @@ Location.hasMany(Address, {
 });
 
 StoreOrders.belongsTo(Address, {
-  as: 'address',
+  as: "address",
   foreignKey: "address_id",
   targetKey: "delivery_id",
 });
