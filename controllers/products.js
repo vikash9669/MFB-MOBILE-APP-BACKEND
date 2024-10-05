@@ -172,7 +172,13 @@ const getRestaurantsList = async (req, res) => {
         {
           model: User,
           as: "user",
-          attributes: ["user_id", "user_image", "user_name", "user_active"],
+          attributes: [
+            "user_id",
+            "user_image",
+            "user_name",
+            "user_active",
+            "user_login",
+          ],
         },
       ],
       order: [["business_order", "ASC"]],
