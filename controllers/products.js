@@ -81,9 +81,14 @@ const getMenu = async (req, res) => {
     const menuItems = await Menu.findAll({
       attributes: ["menu_id", "menu_name", "menu_user_id", "menu_image"],
       where: {
-        menu_id: {
-          [Op.in]: uniqueMenuIds,
-        },
+        [Op.and]: [
+          {
+            menu_id: {
+              [Op.in]: uniqueMenuIds,
+            },
+          },
+          { menu_status: 1 },
+        ],
       },
     });
 
