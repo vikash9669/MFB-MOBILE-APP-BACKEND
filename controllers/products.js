@@ -172,7 +172,7 @@ const getRestaurantsList = async (req, res) => {
         {
           model: User,
           as: "user",
-          attributes: ["user_id", "user_image", "user_name", "user_active"],
+          attributes: ["user_id", "user_image", "user_name", "user_active", "user_login"],
         },
       ],
       order: [["business_order", "ASC"]],
@@ -245,7 +245,7 @@ const getRestaurantsList = async (req, res) => {
         areas,
       };
 
-      if (businessData.user.user_active) {
+      if (businessData.user.user_active && businessData.user.user_login) {
         response.push(businessData);
       }
     }
@@ -408,6 +408,20 @@ const getMenuNamesByUserId = async (req, res) => {
   }
 };
 
+// const testController = async (req, res) => {
+//   const users = await User.findAll({
+//     where: {
+//       user_id: 8769,
+//     },
+//   });
+//   const restaurants = await Business.findAll({
+//     where: {
+//       user_id: 8769,
+//     },
+//   });
+//   res.json({ users, restaurants });
+// };
+
 module.exports = {
   getMenuNamesByUserId,
   getProducts,
@@ -418,4 +432,5 @@ module.exports = {
   getProductsByMenuId,
   getRestaurantsList,
   getRestaurantDetailsByRestaurantId,
+  // testController,
 };
