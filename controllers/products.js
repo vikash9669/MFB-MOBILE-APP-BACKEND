@@ -245,7 +245,7 @@ const getRestaurantsList = async (req, res) => {
         areas,
       };
 
-      if (businessData.user.user_active && businessData.user.user_login) {
+      if (businessData.user.user_active) {
         response.push(businessData);
       }
     }
