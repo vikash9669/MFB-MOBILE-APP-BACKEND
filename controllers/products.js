@@ -339,7 +339,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
       include: {
         model: Menu,
         as: "menus",
-        attributes: ["menu_id", "menu_name", "menu_user_id"],
+        attributes: ["menu_id", "menu_name", "menu_user_id", "menu_order"],
         include: {
           model: Product,
           where: { product_status: 1 },
@@ -364,6 +364,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
         menu_id: menu.menu_id,
         menu_name: menu.menu_name,
         menu_user_id: menu.menu_user_id,
+        menu_order: menu.menu_order,
         products: menu.products.map((product) => ({
           product_id: product.product_id,
           product_name: product.product_name,
@@ -372,6 +373,8 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
         })),
       })),
     };
+
+    restaurantDetails.menus.sort((a, b) => a.menu_order - b.menu_order);
 
     res.status(200).json(restaurantDetails);
   } catch (error) {
@@ -415,17 +418,17 @@ const getMenuNamesByUserId = async (req, res) => {
 };
 
 // const testController = async (req, res) => {
-//   const users = await User.findAll({
-//     where: {
-//       user_id: 8769,
-//     },
-//   });
+//   // const users = await User.findAll({
+//   //   where: {
+//   //     user_id: 8769,
+//   //   },
+//   // });
 //   const restaurants = await Business.findAll({
 //     where: {
-//       user_id: 8769,
+//       user_id: 16,
 //     },
 //   });
-//   res.json({ users, restaurants });
+//   res.json({ restaurants });
 // };
 
 module.exports = {
