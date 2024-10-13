@@ -8,6 +8,7 @@ const authRoutes = require("./routes/auth");
 const productRoutes = require("./routes/products");
 const userRoutes = require("./routes/users");
 const addressRoutes = require("./routes/address");
+const bannerRoutes = require("./routes/banner");
 
 app.use(express.json());
 
@@ -15,6 +16,7 @@ app.use("/auth", authRoutes);
 app.use("/", productRoutes);
 app.use("/user", userRoutes);
 app.use("/", addressRoutes);
+app.use("/banners", bannerRoutes);
 
 sequelize
   .sync({ logging: false })

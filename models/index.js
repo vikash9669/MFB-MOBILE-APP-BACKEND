@@ -10,6 +10,7 @@ const User = require("./user");
 const Area = require("./area");
 const Location = require("./location");
 const Address = require("./store_users_shipping_address");
+const Banner = require("./banner");
 
 Business.hasMany(Menu, {
   foreignKey: "menu_user_id",
@@ -114,4 +115,5 @@ module.exports = {
   Area,
   Location,
   Address,
+  Banner
 };
