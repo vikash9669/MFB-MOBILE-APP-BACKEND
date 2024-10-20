@@ -9,6 +9,7 @@ const {
   User,
 } = require("../models");
 const { transporter } = require("../util/email");
+const { getCouponCodeDetails } = require("../util/coupon");
 
 const getActiveOrders = async (req, res) => {
   const { user_id } = req.user;
@@ -71,6 +72,14 @@ const getActiveOrders = async (req, res) => {
         },
       ],
     });
+
+    if (order == null) {
+      res.status(200).json({
+        order: null,
+        rider: null,
+      });
+      return;
+    }
     const rider = await User.findOne({
       where: {
         user_id: order.rider_id,
@@ -154,7 +163,12 @@ const getOrdersByCustomerId = async (req, res) => {
 
 const createOrder = async (req, res) => {
   const { user_id } = req.user;
-  const { address_id, product_ids_with_quantity, business_user_id } = req.body;
+  const {
+    address_id,
+    product_ids_with_quantity,
+    business_user_id,
+    coupon_code,
+  } = req.body;
   const product_ids = Object.keys(product_ids_with_quantity);
 
   try {
@@ -184,6 +198,11 @@ const createOrder = async (req, res) => {
     const delivery_charges =
       orderAmount >= areaDetails.area_charge_free ? 0 : areaDetails.area_charge;
 
+    const order_discount =
+      coupon_code != null
+        ? getCouponCodeDetails(coupon_code, orderAmount).discount
+        : 0;
+
     const newOrder = await StoreOrders.create({
       customer_id: user_id,
       vendor_id: business_user_id,
@@ -198,7 +217,7 @@ const createOrder = async (req, res) => {
       order_status: 0,
       order_updated_by: user_id,
       delivery_charges,
-      order_discount: 0,
+      order_discount,
     });
 
     for (const product of productDetails) {
@@ -287,8 +306,14 @@ const createOrder = async (req, res) => {
   }
 };
 
+const getCouponCodeDiscountDetails = (req, res) => {
+  const { code, order_amount } = req.body;
+  res.status(200).json(getCouponCodeDetails(code, Number(order_amount)));
+};
+
 module.exports = {
   getOrdersByCustomerId,
   createOrder,
   getActiveOrders,
+  getCouponCodeDiscountDetails,
 };
