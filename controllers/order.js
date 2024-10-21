@@ -13,7 +13,7 @@ const { getCouponCodeDetails } = require("../util/coupon");
 
 const getActiveOrders = async (req, res) => {
   const { user_id } = req.user;
-  const twentyFourHoursAgo = new Date(new Date() - 24 * 60 * 60 * 1000);
+  const oneHourAgo = new Date(new Date() - 1 * 60 * 60 * 1000);
   try {
     const order = await StoreOrders.findOne({
       attributes: [
@@ -43,7 +43,7 @@ const getActiveOrders = async (req, res) => {
         },
         customer_id: user_id,
         order_received_time: {
-          [Op.gte]: twentyFourHoursAgo, // orderReceivedTime is in the last 24 hours
+          [Op.gte]: oneHourAgo, // orderReceivedTime is in the last 24 hours
         },
       },
       order: [["order_id", "DESC"]],
