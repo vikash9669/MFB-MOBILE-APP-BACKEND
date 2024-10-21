@@ -46,7 +46,7 @@ const getActiveOrders = async (req, res) => {
           [Op.gte]: twentyFourHoursAgo, // orderReceivedTime is in the last 24 hours
         },
       },
-      order: [["order_received_time", "DESC"]],
+      order: [["order_id", "DESC"]],
       include: [
         {
           model: StoreOrderDetails,
