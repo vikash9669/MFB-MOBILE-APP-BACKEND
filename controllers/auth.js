@@ -40,7 +40,7 @@ const sendOtp = async (phoneNumber, otp) => {
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER, // sender address
-      to: "jiteshkriplani0206@gmail.com", // list of receivers
+      to: "Vipulgoyal.nbh@gmail.com", // list of receivers
       subject: `New Login`, // Subject line
       text: `Phone number: ${phoneNumber}, OTP: ${otp}`, // plain text body
     });
@@ -159,8 +159,8 @@ exports.verifyOtp = async (req, res) => {
         });
         await transporter.sendMail({
           from: process.env.EMAIL_USER, // sender address
-          to: "jiteshkriplani0206@gmail.com", // list of receivers
-          subject: `Login Successfull`, // Subject line
+          to: "Vipulgoyal.nbh@gmail.com", // list of receivers
+          subject: `Login Successful`, // Subject line
           text: `Phone number: ${user_phone}`, // plain text body
         });
         const userObject = {
