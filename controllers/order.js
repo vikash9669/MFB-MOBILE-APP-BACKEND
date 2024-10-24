@@ -195,13 +195,15 @@ const createOrder = async (req, res) => {
       );
     }, 0);
 
-    const delivery_charges =
-      orderAmount >= areaDetails.area_charge_free ? 0 : areaDetails.area_charge;
+    const couponCodeDetails = getCouponCodeDetails(coupon_code, orderAmount);
 
-    const order_discount =
-      coupon_code != null
-        ? getCouponCodeDetails(coupon_code, orderAmount).discount
-        : 0;
+    const delivery_charges =
+      couponCodeDetails.freeDelivery === true ||
+      orderAmount >= areaDetails.area_charge_free
+        ? 0
+        : areaDetails.area_charge;
+
+    const order_discount = couponCodeDetails.discount;
 
     const newOrder = await StoreOrders.create({
       customer_id: user_id,
