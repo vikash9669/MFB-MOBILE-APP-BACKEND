@@ -1,49 +1,67 @@
 // const { phoneNumber } = require("../constants/regex");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user");
-const { generateOtp } = require("../util/auth");
 const { generateUserCode } = require("../util/user");
 const { StoreOrders, Address, Location } = require("../models");
-const { transporter } = require("../util/email");
+// const { transporter } = require("../util/email");
 
-const sendOtp = async (phoneNumber, otp) => {
-  const apiUrl = "https://www.bulksmsplans.com/api/send_sms";
-  const apiId = process.env.SMS_SERVICE_API_ID; // Your API Id
-  const apiPassword = process.env.SMS_SERVICE_PASSWORD; // Your API Password
-  const smsType = "OTP"; // SMS Type
-  const smsEncoding = 1; // SMS Encoding (1 for Text)
-  const senderId = process.env.SMS_SERVICE_SENDER_ID; // Your Sender ID
+const sendOtp = async (phoneNumber, createUser = false) => {
+  const apiUrl = "https://auth.otpless.app/auth/v1/initiate/otp";
+  // const apiId = process.env.SMS_SERVICE_API_ID; // Your API Id
+  // const apiPassword = process.env.SMS_SERVICE_PASSWORD; // Your API Password
+  // const smsType = "OTP"; // SMS Type
+  // const smsEncoding = 1; // SMS Encoding (1 for Text)
+  // const senderId = process.env.SMS_SERVICE_SENDER_ID; // Your Sender ID
 
-  const message = `Welcome to My First Bite. ${otp} is your OTP.Do not share this OTP with anyone.`;
+  // const message = `Welcome to My First Bite. ${otp} is your OTP.Do not share this OTP with anyone.`;
+
+  const options = {
+    method: "POST",
+    headers: {
+      clientId: process.env.OTPLESS_CLIENT_ID,
+      clientSecret: process.env.OTPLESS_CLIENT_SECRET,
+      "Content-Type": "application/json",
+    },
+    body: `{"phoneNumber":"+91${phoneNumber}","expiry":600,"otpLength":6,"channels":["SMS"]}`,
+  };
 
   try {
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        api_id: apiId,
-        api_password: apiPassword,
-        sms_type: smsType,
-        sms_encoding: smsEncoding,
-        sender: senderId,
-        number: phoneNumber,
-        message: message,
-        template_id: 151011,
-      }),
-    });
+    const response = await fetch(apiUrl, options);
 
     const data = await response.json();
 
+    if (createUser === true) {
+      await User.create({
+        user_phone: phoneNumber,
+        user_name: "",
+        user_email: "",
+        user_password: data.requestId,
+        user_code: generateUserCode(12),
+        user_phone_1: "",
+        user_landmark: "",
+        user_otp: "",
+        // need to check below three fields
+        user_city: "101",
+        user_state: 29,
+        user_zip: "312601",
+      });
+    } else {
+      await User.update(
+        { user_password: data.requestId },
+        {
+          where: { user_phone: phoneNumber },
+        }
+      );
+    }
+
     // send otp to vipul
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER, // sender address
-      to: "Vipulgoyal.nbh@gmail.com", // list of receivers
-      subject: `New Login`, // Subject line
-      text: `Phone number: ${phoneNumber}, OTP: ${otp}`, // plain text body
-    });
+    // await transporter.sendMail({
+    //   from: process.env.EMAIL_USER, // sender address
+    //   to: "Vipulgoyal.nbh@gmail.com", // list of receivers
+    //   subject: `New Login`, // Subject line
+    //   text: `Phone number: ${phoneNumber}, OTP: ${otp}`, // plain text body
+    // });
 
     return data;
   } catch (error) {
@@ -61,37 +79,15 @@ exports.getOtp = async (req, res) => {
       },
     });
     if (user != null) {
-      const otp = generateOtp();
-      await sendOtp(phone_number, otp);
-      await User.update(
-        { user_otp: otp },
-        {
-          where: { user_phone: phone_number },
-        }
-      );
+      await sendOtp(phone_number, false);
       res.json({
         message: "OTP sent successfully",
       });
       return;
     }
-    const otp = generateOtp();
-    await sendOtp(phone_number, otp);
-    const newUser = await User.create({
-      user_phone: phone_number,
-      user_name: "",
-      user_email: "",
-      user_otp: otp,
-      user_code: generateUserCode(12),
-      user_phone_1: "",
-      user_landmark: "",
-      user_password: "",
-      // need to check below three fields
-      user_city: "101",
-      user_state: 29,
-      user_zip: "312601",
-    });
+    await sendOtp(phone_number, true);
     res.json({
-      user: newUser,
+      message: "OTP sent successfully",
     });
   } catch (err) {
     console.log("MFB-error-logs ~ exports.getOtp= ~ err:", err);
@@ -126,7 +122,7 @@ exports.verifyOtp = async (req, res) => {
         user_phone: phone_number,
       },
       attributes: [
-        "user_otp",
+        "user_password",
         "user_id",
         "user_name",
         "user_email",
@@ -156,8 +152,21 @@ exports.verifyOtp = async (req, res) => {
         });
         return;
       }
+      const apiUrl = "https://auth.otpless.app/auth/v1/verify/otp";
+      const options = {
+        method: "POST",
+        headers: {
+          clientId: process.env.OTPLESS_CLIENT_ID,
+          clientSecret: process.env.OTPLESS_CLIENT_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: `{"requestId":"${user.user_password}","otp":"${user_otp}"}`,
+      };
 
-      if (user.user_otp === user_otp) {
+      const response = await fetch(apiUrl, options);
+      const data = await response.json();
+
+      if (data.isOTPVerified === true) {
         const { user_id, user_name, user_email, user_phone, user_phone_1 } =
           user;
         const lastOrder = await StoreOrders.findOne({
@@ -179,12 +188,12 @@ exports.verifyOtp = async (req, res) => {
             },
           ],
         });
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER, // sender address
-          to: "Vipulgoyal.nbh@gmail.com", // list of receivers
-          subject: `Login Successful`, // Subject line
-          text: `Phone number: ${user_phone}`, // plain text body
-        });
+        // await transporter.sendMail({
+        //   from: process.env.EMAIL_USER, // sender address
+        //   to: "Vipulgoyal.nbh@gmail.com", // list of receivers
+        //   subject: `Login Successful`, // Subject line
+        //   text: `Phone number: ${user_phone}`, // plain text body
+        // });
         const userObject = {
           lastOrderAddress: lastOrder?.address,
           user_id,
