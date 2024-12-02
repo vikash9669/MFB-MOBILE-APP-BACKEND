@@ -1,5 +1,5 @@
-const getCouponCodeDetails = (code, orderAmount) => {
-  if (code === "HAPPY DIWALI") {
+const getCouponCodeDetails = ({ code, orderAmount, platform }) => {
+  if (code === "MFBIOS" && platform === "ios") {
     if (orderAmount >= 300) {
       return {
         valid: true,

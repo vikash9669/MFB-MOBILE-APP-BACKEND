@@ -168,6 +168,7 @@ const createOrder = async (req, res) => {
     product_ids_with_quantity,
     business_user_id,
     coupon_code,
+    platform,
   } = req.body;
   const product_ids = Object.keys(product_ids_with_quantity);
 
@@ -195,7 +196,11 @@ const createOrder = async (req, res) => {
       );
     }, 0);
 
-    const couponCodeDetails = getCouponCodeDetails(coupon_code, orderAmount);
+    const couponCodeDetails = getCouponCodeDetails({
+      code: coupon_code,
+      orderAmount,
+      platform,
+    });
 
     const delivery_charges =
       couponCodeDetails.freeDelivery === true ||
@@ -309,8 +314,16 @@ const createOrder = async (req, res) => {
 };
 
 const getCouponCodeDiscountDetails = (req, res) => {
-  const { code, order_amount } = req.body;
-  res.status(200).json(getCouponCodeDetails(code, Number(order_amount)));
+  const { code, order_amount, platform } = req.body;
+  res
+    .status(200)
+    .json(
+      getCouponCodeDetails({
+        code,
+        orderAmount: Number(order_amount),
+        platform,
+      })
+    );
 };
 
 module.exports = {
