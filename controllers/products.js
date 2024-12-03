@@ -349,6 +349,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
             "product_name",
             "product_mrp",
             "product_image",
+            "product_description"
           ],
         },
       },
@@ -370,6 +371,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
           product_name: product.product_name,
           product_mrp: product.product_mrp,
           product_image: product.product_image,
+          product_description: product.product_description
         })),
       })),
     };
