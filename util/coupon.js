@@ -1,7 +1,7 @@
 const MIN_ORDER_AMOUNT = 100;
 
 const getCouponCodeDetails = ({ code, orderAmount, platform }) => {
-  if (code === "FLASH50" && platform === "ios") {
+  if (code.toLowerCase() === "flash50" && platform === "ios") {
     if (orderAmount >= MIN_ORDER_AMOUNT) {
       return {
         valid: true,
