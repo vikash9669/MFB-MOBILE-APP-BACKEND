@@ -1,19 +1,21 @@
+const MIN_ORDER_AMOUNT = 100;
+
 const getCouponCodeDetails = ({ code, orderAmount, platform }) => {
-  if (code === "MFBIOS" && platform === "ios") {
-    if (orderAmount >= 300) {
+  if (code === "FLASH50" && platform === "ios") {
+    if (orderAmount >= MIN_ORDER_AMOUNT) {
       return {
         valid: true,
         success: true,
-        discount: 0,
-        message: "Congratulations! You've got free delivery!",
-        freeDelivery: true,
+        discount: Math.floor(orderAmount / 2),
+        message: "Congratulations! You've got flat 50% off!",
+        freeDelivery: false,
       };
     }
     return {
       valid: true,
       success: false,
       discount: 0,
-      message: "Min. order value should be 300!",
+      message: `Min. order value should be ${MIN_ORDER_AMOUNT}!`,
       freeDelivery: false,
     };
   }
