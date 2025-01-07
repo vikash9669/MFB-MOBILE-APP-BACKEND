@@ -194,6 +194,7 @@ const getRestaurantsList = async (req, res) => {
         "business_slug",
         "business_menu_types",
         "business_fssai",
+        "business_discount",
       ],
     });
 
@@ -243,6 +244,7 @@ const getRestaurantsList = async (req, res) => {
         business_offer_text: business.business_offer_text,
         business_status: business.business_status,
         business_fssai: business.business_fssai,
+        business_discount: business.business_discount,
         menus: menuItems.map((menu) => ({
           menu_id: menu.menu_id,
           menu_name: menu.menu_name,
@@ -349,7 +351,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
             "product_name",
             "product_mrp",
             "product_image",
-            "product_description"
+            "product_description",
           ],
         },
       },
@@ -371,7 +373,7 @@ const getRestaurantDetailsByRestaurantId = async (req, res) => {
           product_name: product.product_name,
           product_mrp: product.product_mrp,
           product_image: product.product_image,
-          product_description: product.product_description
+          product_description: product.product_description,
         })),
       })),
     };
