@@ -180,6 +180,11 @@ const createOrder = async (req, res) => {
     });
 
     const address = await Address.findByPk(address_id);
+    const business = await Business.findOne({
+      where: {
+        user_id: business_user_id,
+      },
+    });
 
     const areaDetails = await Area.findOne({
       where: {
@@ -196,6 +201,14 @@ const createOrder = async (req, res) => {
       );
     }, 0);
 
+    let businessDiscount = 0;
+
+    if (business.business_discount != null && business.business_discount > 0) {
+      businessDiscount = Math.floor(
+        orderAmount - orderAmount * (business.business_discount / 100)
+      );
+    }
+
     const couponCodeDetails = getCouponCodeDetails({
       code: coupon_code,
       orderAmount,
@@ -208,7 +221,10 @@ const createOrder = async (req, res) => {
         ? 0
         : areaDetails.area_charge;
 
-    const order_discount = couponCodeDetails.discount;
+    const order_discount =
+      couponCodeDetails.discount > 0
+        ? couponCodeDetails.discount
+        : businessDiscount;
 
     const newOrder = await StoreOrders.create({
       customer_id: user_id,
@@ -216,7 +232,7 @@ const createOrder = async (req, res) => {
       address_id,
       rider_id: 1,
       vendor_discount: 0,
-      order_amount: orderAmount,
+      order_amount: orderAmount - businessDiscount,
       order_payment_type: "COD",
       order_transaction_id: "CASH",
       order_payment_status: 1,
@@ -315,15 +331,13 @@ const createOrder = async (req, res) => {
 
 const getCouponCodeDiscountDetails = (req, res) => {
   const { code, order_amount, platform } = req.body;
-  res
-    .status(200)
-    .json(
-      getCouponCodeDetails({
-        code,
-        orderAmount: Number(order_amount),
-        platform,
-      })
-    );
+  res.status(200).json(
+    getCouponCodeDetails({
+      code,
+      orderAmount: Number(order_amount),
+      platform,
+    })
+  );
 };
 
 module.exports = {

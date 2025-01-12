@@ -194,7 +194,6 @@ const getRestaurantsList = async (req, res) => {
         "business_slug",
         "business_menu_types",
         "business_fssai",
-        "business_discount",
       ],
     });
 
