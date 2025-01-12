@@ -241,6 +241,7 @@ const createOrder = async (req, res) => {
       order_updated_by: user_id,
       delivery_charges,
       order_discount,
+      order_received_time: new Date().getTime() + 5.5 * 60 * 60 * 1000, // IST time
     });
 
     for (const product of productDetails) {
