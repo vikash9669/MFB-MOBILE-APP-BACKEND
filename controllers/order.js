@@ -205,7 +205,7 @@ const createOrder = async (req, res) => {
 
     if (business.business_discount != null && business.business_discount > 0) {
       businessDiscount = Math.floor(
-        orderAmount - orderAmount * (business.business_discount / 100)
+        orderAmount - orderAmount * ((100 - business.business_discount) / 100)
       );
     }
 
