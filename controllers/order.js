@@ -258,14 +258,14 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // await transporter.sendMail({
-    //   from: process.env.EMAIL_USER, // sender address
-    //   to: process.env.EMAIL_USER, // list of receivers
-    //   subject: `MFB Order ID: ${newOrder.order_id}`, // Subject line
-    //   text: `Order Received from ${req.user.user_name}, Mobile no. ${
-    //     req.user.user_phone
-    //   } and order total value is ${orderAmount + delivery_charges}`, // plain text body
-    // });
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER, // sender address
+      to: "jiteshkriplani0206@gmail.com", // list of receivers
+      subject: `MFB Order ID: ${newOrder.order_id}`, // Subject line
+      text: `Order Received from ${req.user.user_name}, Mobile no. ${
+        req.user.user_phone
+      } and order total value is ${orderAmount + delivery_charges}`, // plain text body
+    });
 
     const orderResponse = await StoreOrders.findOne({
       attributes: [
