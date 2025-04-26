@@ -8,6 +8,8 @@ const {
 } = require("../models/index");
 const { Op } = require("sequelize");
 
+const DEFAULT_CITY_PINCODE = "312601";
+
 const getRestaurants = async (req, res) => {
   try {
     const restaurants = await Business.findAll({
@@ -163,6 +165,7 @@ const getBusinessByMenuId = async (req, res) => {
 };
 
 const getRestaurantsList = async (req, res) => {
+  const city_pincode = req.query.cityPincode || DEFAULT_CITY_PINCODE;
   try {
     const businesses = await Business.findAll({
       where: {
@@ -178,6 +181,7 @@ const getRestaurantsList = async (req, res) => {
             "user_name",
             "user_active",
             "user_login",
+            "user_zip",
           ],
         },
       ],
@@ -252,7 +256,10 @@ const getRestaurantsList = async (req, res) => {
         areas,
       };
 
-      if (businessData.user.user_active) {
+      if (
+        businessData.user.user_active &&
+        businessData.user.user_zip === city_pincode
+      ) {
         response.push(businessData);
       }
     }
