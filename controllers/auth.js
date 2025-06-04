@@ -116,7 +116,7 @@ exports.updateUser = async (req, res) => {
 
 exports.verifyOtp = async (req, res) => {
   try {
-    const { phone_number, user_otp } = req.body;
+    const { phone_number } = req.body;
     const user = await User.findOne({
       where: {
         user_phone: phone_number,
@@ -131,89 +131,110 @@ exports.verifyOtp = async (req, res) => {
       ],
     });
     if (user != null) {
-      if (phone_number === "9999999999" && user_otp === "000000") {
-        const { user_id, user_name, user_email, user_phone, user_phone_1 } =
-          user;
-        const userObject = {
-          lastOrderAddress: undefined,
-          user_id,
-          user_name,
-          user_email,
-          user_phone,
-          user_phone_1,
-        };
-        const token = jwt.sign(userObject, process.env.JWT_SECRET_KEY, {
-          expiresIn: "365d",
-        });
-        res.json({
-          message: "OTP verified successfully",
-          token,
-          user: userObject,
-        });
-        return;
-      }
-      const apiUrl = "https://auth.otpless.app/auth/v1/verify/otp";
-      const options = {
-        method: "POST",
-        headers: {
-          clientId: process.env.OTPLESS_CLIENT_ID,
-          clientSecret: process.env.OTPLESS_CLIENT_SECRET,
-          "Content-Type": "application/json",
+      // const apiUrl = "https://auth.otpless.app/auth/v1/verify/otp";
+      // const options = {
+      //   method: "POST",
+      //   headers: {
+      //     clientId: process.env.OTPLESS_CLIENT_ID,
+      //     clientSecret: process.env.OTPLESS_CLIENT_SECRET,
+      //     "Content-Type": "application/json",
+      //   },
+      //   body: `{"requestId":"${user.user_password}","otp":"${user_otp}"}`,
+      // };
+
+      // const response = await fetch(apiUrl, options);
+      // const data = await response.json();
+
+      const { user_id, user_name, user_email, user_phone, user_phone_1 } = user;
+      const lastOrder = await StoreOrders.findOne({
+        where: {
+          customer_id: user.user_id,
         },
-        body: `{"requestId":"${user.user_password}","otp":"${user_otp}"}`,
-      };
-
-      const response = await fetch(apiUrl, options);
-      const data = await response.json();
-
-      if (data.isOTPVerified === true) {
-        const { user_id, user_name, user_email, user_phone, user_phone_1 } =
-          user;
-        const lastOrder = await StoreOrders.findOne({
-          where: {
-            customer_id: user.user_id,
+        order: [["order_received_time", "DESC"]],
+        attributes: ["order_id"],
+        include: [
+          {
+            model: Address,
+            as: "address",
+            include: [
+              {
+                model: Location,
+                as: "location",
+              },
+            ],
           },
-          order: [["order_received_time", "DESC"]],
-          attributes: ["order_id"],
-          include: [
-            {
-              model: Address,
-              as: "address",
-              include: [
-                {
-                  model: Location,
-                  as: "location",
-                },
-              ],
-            },
-          ],
-        });
-        // await transporter.sendMail({
-        //   from: process.env.EMAIL_USER, // sender address
-        //   to: "Vipulgoyal.nbh@gmail.com", // list of receivers
-        //   subject: `Login Successful`, // Subject line
-        //   text: `Phone number: ${user_phone}`, // plain text body
-        // });
-        const userObject = {
-          lastOrderAddress: lastOrder?.address,
-          user_id,
-          user_name,
-          user_email,
-          user_phone,
-          user_phone_1,
-        };
-        const token = jwt.sign(userObject, process.env.JWT_SECRET_KEY, {
-          expiresIn: "365d",
-        });
-        res.json({
-          message: "OTP verified successfully",
-          token,
-          user: userObject,
-        });
-        return;
-      }
+        ],
+      });
+      // await transporter.sendMail({
+      //   from: process.env.EMAIL_USER, // sender address
+      //   to: "Vipulgoyal.nbh@gmail.com", // list of receivers
+      //   subject: `Login Successful`, // Subject line
+      //   text: `Phone number: ${user_phone}`, // plain text body
+      // });
+      const userObject = {
+        lastOrderAddress: lastOrder?.address,
+        user_id,
+        user_name,
+        user_email,
+        user_phone,
+        user_phone_1,
+      };
+      const token = jwt.sign(userObject, process.env.JWT_SECRET_KEY, {
+        expiresIn: "365d",
+      });
+      res.json({
+        message: "OTP verified successfully",
+        token,
+        user: userObject,
+      });
+      return;
+    } else {
+      await User.create({
+        user_phone: phone_number,
+        user_name: "",
+        user_email: "",
+        user_password: "",
+        user_code: generateUserCode(12),
+        user_phone_1: "",
+        user_landmark: "",
+        user_otp: "",
+        // need to check below three fields
+        user_city: "101",
+        user_state: 29,
+        user_zip: "312601",
+      });
+      const user = await User.findOne({
+        where: {
+          user_phone: phone_number,
+        },
+        attributes: [
+          "user_password",
+          "user_id",
+          "user_name",
+          "user_email",
+          "user_phone",
+          "user_phone_1",
+        ],
+      });
+      const { user_id, user_name, user_email, user_phone, user_phone_1 } = user;
+      const userObject = {
+        lastOrderAddress: undefined,
+        user_id,
+        user_name,
+        user_email,
+        user_phone,
+        user_phone_1,
+      };
+      const token = jwt.sign(userObject, process.env.JWT_SECRET_KEY, {
+        expiresIn: "365d",
+      });
+      res.json({
+        message: "OTP verified successfully",
+        token,
+        user: userObject,
+      });
+      return;
     }
-    res.status(401).json({ message: "Invalid OTP" });
   } catch (err) {
     console.log("MFB-error-logs ~ exports.verifyOtp= ~ err:", err);
     res.status(500).json({ message: "Otp verification failed", err });
