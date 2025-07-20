@@ -209,6 +209,11 @@ const createOrder = async (req, res) => {
       );
     }
 
+    let rainCharges = 0;
+    if (business.business_rain_charges > 0) {
+      rainCharges = business.business_rain_charges;
+    }
+
     const couponCodeDetails = getCouponCodeDetails({
       code: coupon_code,
       orderAmount,
@@ -232,7 +237,7 @@ const createOrder = async (req, res) => {
       address_id,
       rider_id: 1,
       vendor_discount: 0,
-      order_amount: orderAmount - businessDiscount,
+      order_amount: orderAmount - businessDiscount + rainCharges,
       order_payment_type: "COD",
       order_transaction_id: "CASH",
       order_payment_status: 1,
