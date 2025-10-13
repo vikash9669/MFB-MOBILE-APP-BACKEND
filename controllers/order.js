@@ -1,4 +1,5 @@
 const { Op } = require("sequelize");
+const axios = require("axios");
 const {
   StoreOrders,
   StoreOrderDetails,
@@ -8,7 +9,7 @@ const {
   Area,
   User,
 } = require("../models");
-const { transporter } = require("../util/email");
+
 const { getCouponCodeDetails } = require("../util/coupon");
 
 const getActiveOrders = async (req, res) => {
@@ -263,15 +264,6 @@ const createOrder = async (req, res) => {
       });
     }
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER, // sender address
-      to: process.env.EMAIL_USER, // list of receivers
-      subject: `MFB Order ID: ${newOrder.order_id}`, // Subject line
-      text: `Order Received from ${req.user.user_name}, Mobile no. ${
-        req.user.user_phone
-      } and order total value is ${orderAmount + delivery_charges}`, // plain text body
-    });
-
     const orderResponse = await StoreOrders.findOne({
       attributes: [
         "order_id",
@@ -323,6 +315,33 @@ const createOrder = async (req, res) => {
         },
       ],
     });
+
+    // Fetch user details for sendmailapi call
+    const userDetails = await User.findByPk(user_id, {
+      attributes: ["user_name", "user_phone"],
+    });
+
+    // Call sendmailapi after successful order creation
+    try {
+      const emailApiPayload = {
+        user_name: userDetails.user_name || "Unknown User",
+        user_phone: userDetails.user_phone || "0000000000",
+        total_amount: orderAmount - businessDiscount + rainCharges,
+        order_id: newOrder.order_id.toString(),
+      };
+
+      await axios.post("https://myfirstbite.in/Api/sendmailapi", emailApiPayload, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        timeout: 10000, // 10 second timeout
+      });
+
+      console.log("Email notification sent successfully for order:", newOrder.order_id);
+    } catch (emailError) {
+      // Log the error but don't fail the order creation
+      console.error("Failed to send email notification:", emailError.message);
+    }
 
     res
       .status(201)
