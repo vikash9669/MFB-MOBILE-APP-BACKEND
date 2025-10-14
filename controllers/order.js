@@ -326,7 +326,7 @@ const createOrder = async (req, res) => {
       const emailApiPayload = {
         user_name: userDetails.user_name || "Unknown User",
         user_phone: userDetails.user_phone || "0000000000",
-        total_amount: orderAmount - businessDiscount + rainCharges,
+        total_amount: orderAmount - businessDiscount + rainCharges + delivery_charges,
         order_id: newOrder.order_id.toString(),
       };
 
