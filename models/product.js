@@ -55,6 +55,16 @@ const Product = sequelize.define(
       allowNull: false,
       defaultValue: 1,
     },
+    product_open: {
+      type: DataTypes.TIME,
+      allowNull: false,
+      defaultValue: "00:00:00",
+    },
+    product_close: {
+      type: DataTypes.TIME,
+      allowNull: false,
+      defaultValue: "23:59:59",
+    },
   },
   {
     tableName: "store_products",
