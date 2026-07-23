@@ -9,6 +9,11 @@ const {
   recordWalletTxn,
   logOrderEvent,
 } = require("../util/delivery");
+const { notifyPartner } = require("../util/deliveryNotify");
+
+// Same simple incentive model the Home summary uses (13 orders → ₹150 bonus).
+const BONUS_TARGET = 13;
+const BONUS_AMOUNT = 150;
 
 const ACTIVE_STATES = ["accepted", "picked_up"];
 
@@ -88,6 +93,14 @@ exports.accept = async (req, res) => {
     await order.update({ dp_id: dpId, status: "accepted", accepted_at: new Date() });
     await logOrderEvent(order.do_id, dpId, "accepted", "Partner accepted the order");
 
+    await notifyPartner(dpId, {
+      category: "orders",
+      icon: "receipt_long",
+      title: `Order #${order.order_ref} assigned`,
+      body: `Pick up from ${order.pickup_name} · ${order.pickup_area || ""}`.trim(),
+      data: { type: "order_assigned", do_id: order.do_id },
+    });
+
     res.json({ message: "Order accepted", order: serializeOrder(order) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery accept ~ err:", err);
@@ -132,6 +145,14 @@ exports.verifyPickup = async (req, res) => {
     }
     await order.update({ status: "picked_up", picked_up_at: new Date() });
     await logOrderEvent(order.do_id, dpId, "picked_up", "Order picked up from store");
+
+    await notifyPartner(dpId, {
+      category: "orders",
+      icon: "two_wheeler",
+      title: `Picked up · Order #${order.order_ref}`,
+      body: `Deliver to ${order.drop_name} · ${order.drop_area || ""}`.trim(),
+      data: { type: "order_picked_up", do_id: order.do_id },
+    });
 
     res.json({ message: "Pickup confirmed", order: serializeOrder(order) });
   } catch (err) {
@@ -188,6 +209,31 @@ exports.verifyDelivery = async (req, res) => {
     }
     await partner.increment("dp_total_deliveries", { by: 1 });
     await partner.reload();
+
+    // Earnings alert for this delivery.
+    await notifyPartner(dpId, {
+      category: "payments",
+      icon: "payments",
+      title: `Earned ₹${num(order.earn_total)} · Order #${order.order_ref}`,
+      body: "Delivery completed. Earnings added to your wallet.",
+      data: { type: "order_delivered", do_id: order.do_id },
+    });
+
+    // Congratulate when today's deliveries cross the incentive target.
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayDone = await DeliveryOrder.count({
+      where: { dp_id: dpId, status: "delivered", delivered_at: { [Op.gte]: todayStart } },
+    });
+    if (todayDone === BONUS_TARGET) {
+      await notifyPartner(dpId, {
+        category: "bonuses",
+        icon: "emoji_events",
+        title: `You unlocked the ₹${BONUS_AMOUNT} bonus 🎉`,
+        body: `${BONUS_TARGET} orders completed today. Keep it up!`,
+        data: { type: "bonus_unlocked" },
+      });
+    }
 
     const durationMin =
       order.picked_up_at != null

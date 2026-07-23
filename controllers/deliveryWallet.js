@@ -1,6 +1,7 @@
 const { fn, col } = require("sequelize");
 const { DeliveryWalletTxn, DeliveryPartner } = require("../models");
 const { num, serializeTxn, recordWalletTxn } = require("../util/delivery");
+const { notifyPartner } = require("../util/deliveryNotify");
 
 // GET /delivery/wallet — balance, pending settlement, cash to deposit, txns.
 exports.getWallet = async (req, res) => {
@@ -65,6 +66,15 @@ exports.withdraw = async (req, res) => {
     });
 
     await partner.reload();
+
+    await notifyPartner(dpId, {
+      category: "payments",
+      icon: "account_balance",
+      title: `Payout of ₹${amount} initiated`,
+      body: req.body.account ? `Sent to ${req.body.account}` : "Transfer to your bank is on the way.",
+      data: { type: "withdrawal" },
+    });
+
     res.json({
       message: "Withdrawal requested",
       amount,

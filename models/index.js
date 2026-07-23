@@ -18,6 +18,7 @@ const DeliveryWalletTxn = require("./delivery_wallet_txn");
 const DeliveryShift = require("./delivery_shift");
 const DeliveryDocument = require("./delivery_document");
 const DeliveryNotification = require("./delivery_notification");
+const DeliveryDevice = require("./delivery_device");
 
 Business.hasMany(Menu, {
   foreignKey: "menu_user_id",
@@ -128,6 +129,9 @@ DeliveryDocument.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "d
 DeliveryPartner.hasMany(DeliveryNotification, { foreignKey: "dp_id", sourceKey: "dp_id", as: "notifications" });
 DeliveryNotification.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
 
+DeliveryPartner.hasMany(DeliveryDevice, { foreignKey: "dp_id", sourceKey: "dp_id", as: "devices" });
+DeliveryDevice.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+
 module.exports = {
   User,
   Product,
@@ -149,4 +153,5 @@ module.exports = {
   DeliveryShift,
   DeliveryDocument,
   DeliveryNotification,
+  DeliveryDevice,
 };

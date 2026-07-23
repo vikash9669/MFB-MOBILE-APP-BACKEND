@@ -36,6 +36,19 @@ exports.list = async (req, res) => {
   }
 };
 
+// GET /delivery/notifications/unread-count — lightweight badge poll.
+exports.unreadCount = async (req, res) => {
+  try {
+    const unread = await DeliveryNotification.count({
+      where: { dp_id: req.user.dp_id, is_read: false },
+    });
+    res.json({ unread });
+  } catch (err) {
+    console.log("MFB-error-logs ~ delivery unreadCount ~ err:", err);
+    res.status(500).json({ message: "Failed to load unread count", err });
+  }
+};
+
 // POST /delivery/notifications/read-all — mark every alert as read.
 exports.markAllRead = async (req, res) => {
   try {

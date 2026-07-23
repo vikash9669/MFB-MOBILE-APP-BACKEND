@@ -14,6 +14,7 @@ const shifts = require("../controllers/deliveryShifts");
 const performance = require("../controllers/deliveryPerformance");
 const documents = require("../controllers/deliveryDocuments");
 const notifications = require("../controllers/deliveryNotifications");
+const devices = require("../controllers/deliveryDevices");
 
 const router = express.Router();
 
@@ -59,7 +60,12 @@ router.post("/documents/:id/reupload", documents.reupload);
 
 // ── Notifications ──────────────────────────────────────────────────
 router.get("/notifications", notifications.list);
+router.get("/notifications/unread-count", notifications.unreadCount);
 router.post("/notifications/read-all", notifications.markAllRead);
 router.post("/notifications/:id/read", notifications.markRead);
+
+// ── Push devices (FCM token registration) ──────────────────────────
+router.post("/devices", devices.register);
+router.delete("/devices", devices.unregister);
 
 module.exports = router;

@@ -12,6 +12,7 @@ const {
   DeliveryShift,
   DeliveryDocument,
   DeliveryNotification,
+  DeliveryDevice,
 } = require("../models");
 
 async function migrate() {
@@ -24,6 +25,7 @@ async function migrate() {
   await DeliveryShift.sync({ alter: true });
   await DeliveryDocument.sync({ alter: true });
   await DeliveryNotification.sync({ alter: true });
+  await DeliveryDevice.sync({ alter: true });
   console.log("Delivery collections (store_delivery_*) are up to date.");
 }
 
