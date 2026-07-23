@@ -15,7 +15,8 @@ const OrderDetails = sequelize.define(
       allowNull: false
     },
     product_id: {
-      type: DataTypes.SMALLINT,
+      // Must match store_products.product_id (INTEGER) for the FK to build.
+      type: DataTypes.INTEGER,
       allowNull: false
     },
     product_qty: {

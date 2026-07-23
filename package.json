@@ -5,6 +5,9 @@
   "scripts": {
     "startsss": "nodemon --env-file=.env app.js",
     "start": "node app.js",
+    "seed": "node --env-file=.env scripts/seed.js",
+    "migrate:delivery": "node --env-file=.env scripts/migrate-delivery.js",
+    "seed:delivery": "node --env-file=.env scripts/seed-delivery.js",
     "lint": "eslint ./"
   },
   "dependencies": {

@@ -11,6 +11,13 @@ const Area = require("./area");
 const Location = require("./location");
 const Address = require("./store_users_shipping_address");
 const Banner = require("./banner");
+const DeliveryPartner = require("./delivery_partner");
+const DeliveryOrder = require("./delivery_order");
+const DeliveryOrderEvent = require("./delivery_order_event");
+const DeliveryWalletTxn = require("./delivery_wallet_txn");
+const DeliveryShift = require("./delivery_shift");
+const DeliveryDocument = require("./delivery_document");
+const DeliveryNotification = require("./delivery_notification");
 
 Business.hasMany(Menu, {
   foreignKey: "menu_user_id",
@@ -102,6 +109,25 @@ Address.hasMany(StoreOrders, {
   foreignKey: "address_id",
 });
 
+// ── Delivery-partner collections (kept separate from the customer app) ──
+DeliveryPartner.hasMany(DeliveryOrder, { foreignKey: "dp_id", sourceKey: "dp_id", as: "orders" });
+DeliveryOrder.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id", as: "partner" });
+
+DeliveryOrder.hasMany(DeliveryOrderEvent, { foreignKey: "do_id", sourceKey: "do_id", as: "events" });
+DeliveryOrderEvent.belongsTo(DeliveryOrder, { foreignKey: "do_id", targetKey: "do_id" });
+
+DeliveryPartner.hasMany(DeliveryWalletTxn, { foreignKey: "dp_id", sourceKey: "dp_id", as: "wallet_txns" });
+DeliveryWalletTxn.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+
+DeliveryPartner.hasMany(DeliveryShift, { foreignKey: "dp_id", sourceKey: "dp_id", as: "shifts" });
+DeliveryShift.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+
+DeliveryPartner.hasMany(DeliveryDocument, { foreignKey: "dp_id", sourceKey: "dp_id", as: "documents" });
+DeliveryDocument.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+
+DeliveryPartner.hasMany(DeliveryNotification, { foreignKey: "dp_id", sourceKey: "dp_id", as: "notifications" });
+DeliveryNotification.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+
 module.exports = {
   User,
   Product,
@@ -115,5 +141,12 @@ module.exports = {
   Area,
   Location,
   Address,
-  Banner
+  Banner,
+  DeliveryPartner,
+  DeliveryOrder,
+  DeliveryOrderEvent,
+  DeliveryWalletTxn,
+  DeliveryShift,
+  DeliveryDocument,
+  DeliveryNotification,
 };
