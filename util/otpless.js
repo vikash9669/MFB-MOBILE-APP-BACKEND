@@ -1,6 +1,8 @@
 // Thin wrapper over the OTPless headless Auth API.
-// Both the customer (store_users) and delivery-partner auth flows go through
-// here so the OTPless credentials and request/response shape live in one place.
+// Selected when MSGPROVIDER=otpless (the default). Both the customer
+// (store_users) and delivery-partner flows reach it through util/otp.js, so the
+// OTPless credentials and request/response shape live in one place. Dev-mode
+// bypass is handled centrally in util/otp.js — this module only speaks OTPless.
 
 const OTPLESS_BASE_URL = "https://auth.otpless.app/auth/v1";
 
@@ -8,12 +10,6 @@ const CHANNELS = {
   SMS: "SMS",
   WHATSAPP: "WHATSAPP",
 };
-
-// Local/dev bypass: when OTP_DEV_MODE=true no OTP is actually sent and any
-// login accepts the fixed OTP_DEV_CODE (default "123456"). Never enable this in
-// production — it lets anyone log in as any number.
-const isDevMode = () => process.env.OTP_DEV_MODE === "true";
-const DEV_OTP_CODE = () => process.env.OTP_DEV_CODE || "123456";
 
 // Accepts anything the client sends ("sms", "whatsapp", "WHATSAPP", …) and
 // falls back to SMS for unknown values.
@@ -31,15 +27,6 @@ const otplessHeaders = () => ({
 // Sends an OTP over the chosen channel and returns the OTPless requestId, which
 // the caller must persist so it can be replayed during verification.
 const initiateOtp = async (phoneNumber, channel = CHANNELS.SMS) => {
-  if (isDevMode()) {
-    console.log(
-      `MFB-dev ~ OTP for +91${phoneNumber} via ${normalizeChannel(
-        channel
-      )}: use ${DEV_OTP_CODE()}`
-    );
-    return { requestId: `dev:${phoneNumber}` };
-  }
-
   const response = await fetch(`${OTPLESS_BASE_URL}/initiate/otp`, {
     method: "POST",
     headers: otplessHeaders(),
@@ -60,14 +47,11 @@ const initiateOtp = async (phoneNumber, channel = CHANNELS.SMS) => {
   return data;
 };
 
-// Verifies the OTP the user typed against the stored requestId. Returns a
-// simple { verified, data } shape so controllers don't have to know OTPless's
-// response field names.
-const verifyOtp = async (requestId, otp) => {
-  if (isDevMode()) {
-    return { verified: String(otp) === DEV_OTP_CODE(), data: { dev: true } };
-  }
-
+// Verifies the OTP the user typed against the stored requestId. `phoneNumber` is
+// part of the shared provider interface (MSG91 needs it) but unused here — OTPless
+// keys verification off the requestId. Returns a simple { verified, data } shape
+// so controllers don't have to know OTPless's response field names.
+const verifyOtp = async (phoneNumber, requestId, otp) => {
   const response = await fetch(`${OTPLESS_BASE_URL}/verify/otp`, {
     method: "POST",
     headers: otplessHeaders(),

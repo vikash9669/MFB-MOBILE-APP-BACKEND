@@ -56,6 +56,51 @@ const DeliveryPartner = sequelize.define(
       type: DataTypes.STRING(20),
       allowNull: true,
     },
+    // Profile selfie (base64 data URI or URL), captured during onboarding.
+    // LONGTEXT: a base64 image is far larger than TEXT's 64KB cap.
+    dp_photo: {
+      type: DataTypes.TEXT("long"),
+      allowNull: true,
+    },
+    // ── Onboarding / verification (admin-gated) ──────────────────────
+    // pending      → new account, still filling profile + KYC
+    // under_review → submitted, waiting on admin
+    // approved     → full app unlocked
+    // rejected     → admin sent it back (see dp_rejection_reason)
+    dp_verification_status: {
+      type: DataTypes.ENUM("pending", "under_review", "approved", "rejected"),
+      allowNull: false,
+      defaultValue: "pending",
+    },
+    dp_rejection_reason: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    dp_submitted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    dp_reviewed_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    // ── Payout details (collected at onboarding) ─────────────────────
+    dp_bank_account: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+    },
+    dp_bank_ifsc: {
+      type: DataTypes.STRING(15),
+      allowNull: true,
+    },
+    dp_bank_holder: {
+      type: DataTypes.STRING(80),
+      allowNull: true,
+    },
+    dp_upi_id: {
+      type: DataTypes.STRING(80),
+      allowNull: true,
+    },
     // ── Live status ──────────────────────────────────────────────────
     // Whether the partner is currently online and accepting orders.
     dp_online: {

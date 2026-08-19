@@ -1,5 +1,6 @@
 const { DeliveryPartner } = require("../models");
 const { num } = require("../util/delivery");
+const { summaryForPartner, recentForPartner } = require("../util/ratings");
 
 // GET /delivery/performance?period=week|month|all
 // Metrics are stored as rolling values on the partner row; the period is echoed
@@ -14,11 +15,20 @@ exports.getPerformance = async (req, res) => {
       ? req.query.period
       : "week";
 
-    const rating = num(partner.dp_rating);
-    // Approximate a star distribution from the average rating for the UI bars.
-    const five = Math.min(0.95, Math.max(0.5, (rating - 3) / 2));
-    const four = Math.min(0.3, (1 - five) * 0.7);
-    const three = Math.max(0, 1 - five - four);
+    // Real ratings when the table exists.
+    //
+    // What was here before invented the star spread: it ran a formula over the
+    // average and emitted three bars. Two riders with identical averages but
+    // completely different histories — one steady 4s, one alternating 5s and
+    // 2s — saw the same chart, and neither chart described anything a customer
+    // had actually done. A rider looking at it to work out what to improve was
+    // reading arithmetic on a single number.
+    const summary = await summaryForPartner(req.user.dp_id);
+
+    // Falls back to the cached column when the migration has not run, so the
+    // screen keeps working — just without a breakdown, which is honest: with no
+    // ratings table there is no breakdown to show.
+    const rating = summary ? summary.average : num(partner.dp_rating);
 
     res.json({
       period,
@@ -27,12 +37,12 @@ exports.getPerformance = async (req, res) => {
       cancellation_pct: num(partner.dp_cancellation_pct),
       avg_delivery_min: num(partner.dp_avg_delivery_min),
       rating,
+      rating_count: summary ? summary.count : 0,
       total_deliveries: num(partner.dp_total_deliveries),
-      rating_breakdown: [
-        { star: 5, pct: Math.round(five * 100) },
-        { star: 4, pct: Math.round(four * 100) },
-        { star: 3, pct: Math.round(three * 100) },
-      ],
+      // Every star, not just the top three — a rider needs to see the 1s and 2s
+      // most of all. Empty when there is nothing real to show.
+      rating_breakdown: summary ? summary.breakdown : [],
+      recent_ratings: await recentForPartner(req.user.dp_id, { limit: 10 }),
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getPerformance ~ err:", err);

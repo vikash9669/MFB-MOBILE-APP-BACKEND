@@ -81,7 +81,8 @@ const DeliveryOrder = sequelize.define(
     earn_tip: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
     earn_total: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
     // Proof-of-delivery photo reference (data URI / URL / storage key).
-    proof_photo: { type: DataTypes.TEXT, allowNull: true },
+    // LONGTEXT: base64 proof photo exceeds TEXT's 64KB cap.
+    proof_photo: { type: DataTypes.TEXT("long"), allowNull: true },
     // ── Timestamps ───────────────────────────────────────────────────
     offered_at: { type: DataTypes.DATE, allowNull: false, defaultValue: NOW },
     accepted_at: { type: DataTypes.DATE, allowNull: true },

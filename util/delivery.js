@@ -25,6 +25,17 @@ const serializePartner = (p) => ({
   role: "delivery_partner",
   vehicle_type: p.dp_vehicle_type,
   vehicle_number: p.dp_vehicle_number,
+  photo: p.dp_photo || null,
+  // Onboarding / admin verification state (gates the whole app).
+  verification_status: p.dp_verification_status || "pending",
+  rejection_reason: p.dp_rejection_reason || null,
+  submitted_at: p.dp_submitted_at || null,
+  bank: {
+    account: p.dp_bank_account || "",
+    ifsc: p.dp_bank_ifsc || "",
+    holder: p.dp_bank_holder || "",
+    upi: p.dp_upi_id || "",
+  },
   online: !!p.dp_online,
   wallet_balance: num(p.dp_wallet_balance),
   cash_in_hand: num(p.dp_cash_in_hand),

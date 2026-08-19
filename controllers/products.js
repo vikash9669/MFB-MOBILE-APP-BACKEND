@@ -8,7 +8,19 @@ const {
 } = require("../models/index");
 const { Op } = require("sequelize");
 
-const DEFAULT_CITY_PINCODE = "312601";
+// Which city the storefront shows when the caller names no pincode.
+//
+// The customer app currently calls GET /restaurant with no cityPincode at all
+// (see the getRestaurants thunk), so in practice this is not a fallback — it
+// decides the city for every customer. That makes it config rather than a
+// constant: pointing a test build at another city should not need a code edit.
+//
+// Nimbahera (312601) stays the default because that is where the live vendors
+// are. Set DEFAULT_CITY_PINCODE to override, e.g. 452010 for Indore.
+//
+// The real fix is for the app to send the pincode of the selected delivery
+// address; until it does, only one city is reachable at a time.
+const DEFAULT_CITY_PINCODE = process.env.DEFAULT_CITY_PINCODE || "312601";
 
 const getRestaurants = async (req, res) => {
   try {
@@ -64,9 +76,19 @@ const getMenu = async (req, res) => {
     const menuStoreMap = new Map();
 
     stores.forEach((store) => {
-      const menuIds = store.business_menu_types
+      // Same parsing hazard guarded in getRestaurantsList below: the stored
+      // list is text, and real rows carry a trailing comma ("1219,"), so a
+      // split yields an empty segment whose parseInt is NaN. That NaN reached
+      // `menu_id IN (...)`, which Sequelize renders as a bare identifier and
+      // MySQL rejects with "Unknown column 'NaN' in 'where clause'".
+      //
+      // One malformed vendor row therefore returned 500 for /menu to every
+      // customer, which is how the app hung on its home screen. Filtering here
+      // keeps a bad row costing only its own menu entries.
+      const menuIds = String(store.business_menu_types || "")
         .split(",")
-        .map((id) => parseInt(id.trim()));
+        .map((id) => parseInt(id.trim(), 10))
+        .filter(Number.isInteger);
       menuIds.forEach((menuId) => {
         if (!menuStoreMap.has(menuId)) {
           menuStoreMap.set(menuId, []);
@@ -132,9 +154,12 @@ const getBusinessByMenuId = async (req, res) => {
     }
 
     const business = stores[0];
-    const menuIds = business.business_menu_types
+    // See getMenu above — trailing commas and empty values yield NaN ids that
+    // MySQL rejects.
+    const menuIds = String(business.business_menu_types || "")
       .split(",")
-      .map((id) => parseInt(id.trim()));
+      .map((id) => parseInt(id.trim(), 10))
+      .filter(Number.isInteger);
 
     const menuItems = await Menu.findAll({
       attributes: ["menu_id", "menu_name", "menu_user_id"],
@@ -205,18 +230,27 @@ const getRestaurantsList = async (req, res) => {
     const response = [];
 
     for (const business of businesses) {
-      const menuIds = business.business_menu_types
+      // business_menu_types is a comma-separated list of menu ids kept as text.
+      // A vendor with none configured stores "" (or NULL), and "".split(",")
+      // is [""] — parseInt of which is NaN. That reached the query as
+      // `menu_id IN (NaN)`, which MySQL rejects as an unknown column, and the
+      // 500 took down the whole storefront listing rather than just that one
+      // restaurant. Filter to real ids, and skip the lookup when none remain.
+      const menuIds = String(business.business_menu_types || "")
         .split(",")
-        .map((id) => parseInt(id.trim()));
+        .map((id) => parseInt(id.trim(), 10))
+        .filter(Number.isInteger);
 
-      const menuItems = await Menu.findAll({
-        attributes: ["menu_id", "menu_name"],
-        where: {
-          menu_id: {
-            [Op.in]: menuIds,
-          },
-        },
-      });
+      const menuItems = menuIds.length
+        ? await Menu.findAll({
+            attributes: ["menu_id", "menu_name"],
+            where: {
+              menu_id: {
+                [Op.in]: menuIds,
+              },
+            },
+          })
+        : [];
 
       const areas = await Area.findAll({
         attributes: [

@@ -5,6 +5,35 @@ const {
   DeliveryShift,
 } = require("../models");
 const { num, serializePartner } = require("../util/delivery");
+const {
+  startSession,
+  closeSession,
+  recordPoint,
+} = require("../util/deliverySessions");
+const { dispatchReady } = require("../util/dispatch/columns");
+const { reassign } = require("../util/dispatch/engine");
+
+/**
+ * Returns any not-yet-collected job held by a rider who just went offline.
+ *
+ * Deliberately limited to 'accepted': a job already picked up is physically
+ * with that rider, and re-offering it would send a second rider to collect
+ * food that has left the restaurant.
+ */
+async function releaseJobsOnGoingOffline(dpId) {
+  if (!(await dispatchReady())) return;
+  const held = await DeliveryOrder.findAll({
+    where: { dp_id: dpId, status: "accepted" },
+    attributes: ["do_id"],
+    raw: true,
+  });
+  for (const job of held) {
+    await reassign(job.do_id, "rider went offline before pickup");
+  }
+  if (held.length > 0) {
+    console.log(`MFB ~ dispatch ~ rider ${dpId} went offline, released ${held.length} job(s)`);
+  }
+}
 
 const startOfToday = () => {
   const d = new Date();
@@ -96,7 +125,45 @@ exports.setOnline = async (req, res) => {
       return res.status(404).json({ message: "Partner not found" });
     }
     const online = req.body.online === true || req.body.online === "true";
-    await partner.update({ dp_online: online });
+    const was = !!partner.dp_online;
+
+    // Where the device was at the moment of the toggle. Optional: the app sends
+    // it when location is granted and a fix arrives in time, and the toggle must
+    // still work when it does not.
+    const lat = Number(req.body.lat);
+    const lng = Number(req.body.lng);
+    const coords =
+      Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+
+    // Keep the partner's last-known position current too, so the live map and
+    // the session record agree.
+    await partner.update(
+      coords ? { dp_online: online, dp_lat: coords.lat, dp_lng: coords.lng } : { dp_online: online }
+    );
+
+    // Going offline with a job still in hand strands it: the customer waits on
+    // a rider who has closed the app. Hand it straight back to the engine.
+    // Only a job not yet picked up can be reassigned — once the food is on the
+    // bike, reassignment is a human problem, not a routing one.
+    if (was && !online) {
+      await releaseJobsOnGoingOffline(partner.dp_id).catch((e) =>
+        console.log("MFB ~ dispatch ~ release on offline ~", e.message)
+      );
+    }
+
+    // Record the online→offline stretch. This is what active time is measured
+    // from — dp_online alone keeps no history. Only act on an actual change, so
+    // a repeated "go online" does not start a second session. Best-effort: the
+    // toggle itself must never fail because bookkeeping did.
+    if (was !== online) {
+      try {
+        if (online) await startSession(partner.dp_id, new Date(), coords);
+        else await closeSession(partner.dp_id, new Date(), coords);
+      } catch (sessErr) {
+        console.log("MFB-error-logs ~ session bookkeeping ~ err:", sessErr);
+      }
+    }
+
     res.json({ message: online ? "You're online" : "You're offline", online });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery setOnline ~ err:", err);
@@ -115,6 +182,16 @@ exports.updateLocation = async (req, res) => {
       { dp_lat: lat, dp_lng: lng },
       { where: { dp_id: req.user.dp_id } }
     );
+
+    // Append the sample to the running online session, so a shift carries the
+    // trail of where the partner actually was. Best-effort: losing a breadcrumb
+    // must never fail the live-position push the map depends on.
+    try {
+      await recordPoint(req.user.dp_id, Number(lat), Number(lng));
+    } catch (pointErr) {
+      console.log("MFB-error-logs ~ session point ~ err:", pointErr);
+    }
+
     res.json({ message: "Location updated" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery updateLocation ~ err:", err);

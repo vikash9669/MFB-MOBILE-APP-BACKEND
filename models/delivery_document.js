@@ -22,7 +22,8 @@ const DeliveryDocument = sequelize.define(
       defaultValue: "active",
     },
     expires_on: { type: DataTypes.DATEONLY, allowNull: true },
-    file_url: { type: DataTypes.TEXT, allowNull: true },
+    // LONGTEXT: holds a base64 document image (TEXT's 64KB cap is too small).
+    file_url: { type: DataTypes.TEXT("long"), allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: false, defaultValue: NOW },
   },
   {

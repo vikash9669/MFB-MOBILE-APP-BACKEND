@@ -2,7 +2,7 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 const { generateUserCode } = require("../util/user");
 const { StoreOrders, Address, Location } = require("../models");
-const { initiateOtp, verifyOtp } = require("../util/otpless");
+const { initiateOtp, verifyOtp } = require("../util/otp");
 
 // Sends the OTP via OTPless over the requested channel and stores the returned
 // requestId on the user (in user_password) so verifyOtp can replay it.
@@ -104,7 +104,7 @@ exports.verifyOtp = async (req, res) => {
       return;
     }
 
-    const { verified } = await verifyOtp(user.user_password, user_otp);
+    const { verified } = await verifyOtp(phone_number, user.user_password, user_otp);
     if (!verified) {
       res.status(401).json({ message: "Invalid or expired OTP" });
       return;

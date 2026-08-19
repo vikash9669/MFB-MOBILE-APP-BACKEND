@@ -1,20 +1,147 @@
-const { Op } = require("sequelize");
-const axios = require("axios");
+const { Op, QueryTypes } = require("sequelize");
+const sequelize = require("../util/database");
+const { buildTracking } = require("../util/orderTracking");
+const { ratingForDelivery } = require("../util/ratings");
+const { ratingsReady } = require("../util/ratingColumns");
 const {
   StoreOrders,
   StoreOrderDetails,
   Product,
   Business,
-  Address,
-  Area,
   User,
 } = require("../models");
 
 const { getCouponCodeDetails } = require("../util/coupon");
+const {
+  priceCart,
+  createOrder: createOrderRow,
+  findOrderById,
+  runPostOrderSideEffects,
+  PAYMENT_COLUMNS,
+} = require("../util/orders");
+
+/**
+ * The delivery job behind an order, with whatever dispatch columns exist.
+ *
+ * Raw SQL and a column probe rather than the model, for the reason documented
+ * in util/dispatch/columns.js: naming dispatch_state on the model would put it
+ * in every SELECT and break all of them until the migration runs.
+ */
+async function loadTrackingJob(orderId) {
+  const { dispatchReady } = require("../util/dispatch/columns");
+  const extra = (await dispatchReady()) ? ", `dispatch_state`, `dispatch_note`" : "";
+
+  const [job] = await sequelize.query(
+    `SELECT \`do_id\`, \`status\`, \`dp_id\`, \`drop_otp\`, \`distance_km\`,
+            \`pickup_lat\`, \`pickup_lng\`, \`pickup_name\`,
+            \`drop_lat\`, \`drop_lng\`, \`picked_up_at\`, \`accepted_at\`${extra}
+       FROM \`store_delivery_orders\`
+      WHERE \`source_order_id\` = :orderId
+      ORDER BY \`do_id\` DESC LIMIT 1`,
+    { replacements: { orderId }, type: QueryTypes.SELECT }
+  );
+  return job ?? null;
+}
+
+/**
+ * Lifecycle columns the order model deliberately does not name.
+ *
+ * Returns {} before the migration, which the stage machine handles: no prep
+ * promise simply means falling back to a default estimate.
+ */
+async function loadLifecycleFields(orderId) {
+  const { ordersReady } = require("../util/lifecycleColumns");
+  if (!(await ordersReady())) return {};
+
+  const [row] = await sequelize.query(
+    "SELECT `order_accepted_time`, `order_prep_minutes`, `order_cancel_reason` " +
+      "FROM `store_orders` WHERE `order_id` = :orderId",
+    { replacements: { orderId }, type: QueryTypes.SELECT }
+  );
+  return row ?? {};
+}
+
+/**
+ * GET /user/orders/:id/route — the line to draw on the customer's map.
+ *
+ * Deliberately a separate endpoint from the rider's /delivery/orders/:id/route.
+ * That one authorises by "is this your job"; this one by "is this your order".
+ * Reusing it would have meant either widening rider auth to customers or
+ * handing customers a rider token, and both are worse than fifty lines.
+ *
+ * The leg follows the food: before pickup the interesting line is
+ * restaurant→door, after pickup it is rider→door. Returning { route: null } is
+ * a normal answer — the screen falls back to a straight line rather than an
+ * empty map.
+ */
+const getOrderRoute = async (req, res) => {
+  try {
+    const order = await StoreOrders.findOne({
+      where: { order_id: req.params.id, customer_id: req.user.user_id },
+      attributes: ["order_id"],
+      raw: true,
+    });
+    if (order == null) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const job = await loadTrackingJob(order.order_id);
+    if (job == null) {
+      return res.json({ route: null, reason: "no delivery job yet" });
+    }
+
+    const drop =
+      job.drop_lat != null && job.drop_lng != null
+        ? { lat: Number(job.drop_lat), lng: Number(job.drop_lng) }
+        : null;
+    const pickupPoint =
+      job.pickup_lat != null && job.pickup_lng != null
+        ? { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng) }
+        : null;
+
+    let from = pickupPoint;
+    if (job.status === "picked_up" && job.dp_id != null) {
+      const { DeliveryPartner } = require("../models");
+      const partner = await DeliveryPartner.findByPk(job.dp_id, {
+        attributes: ["dp_lat", "dp_lng"],
+        raw: true,
+      });
+      if (partner?.dp_lat != null && partner?.dp_lng != null) {
+        from = { lat: Number(partner.dp_lat), lng: Number(partner.dp_lng) };
+      }
+    }
+
+    if (from == null || drop == null) {
+      return res.json({ route: null, reason: "missing coordinates" });
+    }
+
+    const { directions } = require("../util/geo");
+    const route = await directions(from, drop);
+    res.json({ route, from, to: drop });
+  } catch (err) {
+    console.log("MFB-error-logs ~ customer order route ~", err.message);
+    // Never 500 a map. The screen is useful without it.
+    res.json({ route: null, reason: "unavailable" });
+  }
+};
 
 const getActiveOrders = async (req, res) => {
   const { user_id } = req.user;
-  const oneHourAgo = new Date(new Date() - 1 * 60 * 60 * 1000);
+  // How far back an order can be and still count as "in flight".
+  //
+  // This was one hour, while the comment below it claimed 24 — and one hour is
+  // wrong now that the tracking screen exists. An order that takes longer than
+  // that is precisely the one a customer is anxious about, and it would lose
+  // its tracking screen at the worst possible moment. Terminal statuses are
+  // already excluded by the where clause, so the window only needs to be long
+  // enough to cover any delivery that is genuinely still happening.
+  const ACTIVE_WINDOW_HOURS = Number(process.env.ACTIVE_ORDER_WINDOW_HOURS || 24);
+  const activeSince = new Date(Date.now() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000);
+  // How long a finished order keeps showing its outcome before dropping into
+  // history. Long enough to read "declined, refund on its way"; short enough
+  // that yesterday's dinner isn't still on the home screen.
+  const TERMINAL_WINDOW_MIN = Number(process.env.TERMINAL_ORDER_WINDOW_MIN || 90);
+  const terminalSince = new Date(Date.now() - TERMINAL_WINDOW_MIN * 60 * 1000);
   try {
     const order = await StoreOrders.findOne({
       attributes: [
@@ -39,13 +166,22 @@ const getActiveOrders = async (req, res) => {
         "order_updated_by",
       ],
       where: {
-        order_status: {
-          [Op.notIn]: [5, 6],
-        },
         customer_id: user_id,
-        order_received_time: {
-          [Op.gte]: oneHourAgo, // orderReceivedTime is in the last 24 hours
-        },
+        order_received_time: { [Op.gte]: activeSince },
+        // Delivered (5) and Cancelled (6) used to be excluded outright. That
+        // made the tracking screen's two most important endings unreachable:
+        // a customer whose order the restaurant declined saw the screen go
+        // blank instead of being told what happened — and told about their
+        // refund. So terminal orders are still returned, but only while the
+        // customer is plausibly still looking at the screen; after that they
+        // belong in order history, not in "active".
+        [Op.or]: [
+          { order_status: { [Op.notIn]: [5, 6] } },
+          {
+            order_status: { [Op.in]: [5, 6] },
+            order_received_time: { [Op.gte]: terminalSince },
+          },
+        ],
       },
       order: [["order_id", "DESC"]],
       include: [
@@ -86,9 +222,98 @@ const getActiveOrders = async (req, res) => {
         user_id: order.rider_id,
       },
     });
+
+    // The delivery code the customer reads out at the door.
+    //
+    // It was generated on every delivery job and checked at /verify-delivery,
+    // but never shown to the person expected to say it — so no delivery could
+    // be completed. This is the one OTP worth keeping: it is what stops a rider
+    // marking an order delivered that never arrived.
+    //
+    // Only released once a rider actually has the order. Handing it out at
+    // placement would let it be screenshotted and shared long before anyone is
+    // at the door, which defeats the point.
+    let deliveryOtp = null;
+    let deliveryStage = null;
+    let tracking = null;
+    let pickup = null;
+    let drop = null;
+    try {
+      const job = await loadTrackingJob(order.order_id);
+
+      if (job && ["accepted", "picked_up"].includes(job.status)) {
+        deliveryOtp = job.drop_otp;
+        deliveryStage = job.status;
+      }
+
+      // The rider's own record, for a live position. Separate from `rider`
+      // above, which is the panel-side store_users row and has no coordinates.
+      let partner = null;
+      if (job?.dp_id != null) {
+        const { DeliveryPartner } = require("../models");
+        partner = await DeliveryPartner.findByPk(job.dp_id, {
+          attributes: ["dp_id", "dp_name", "dp_lat", "dp_lng"],
+          raw: true,
+        });
+      }
+
+      const lifecycle = await loadLifecycleFields(order.order_id);
+      tracking = buildTracking({
+        order: { ...order.toJSON(), ...lifecycle },
+        job,
+        partner,
+        riderUser: rider,
+      });
+
+      // Map endpoints. Sent whenever known so the screen can draw the route
+      // without a second round-trip; the rider's own position is gated inside
+      // buildTracking and is not part of this.
+      if (job?.pickup_lat != null && job?.pickup_lng != null) {
+        pickup = { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng), name: job.pickup_name };
+      }
+      if (job?.drop_lat != null && job?.drop_lng != null) {
+        drop = { lat: Number(job.drop_lat), lng: Number(job.drop_lng) };
+      }
+    } catch (err) {
+      // Tracking is an enhancement. A customer must still be able to read
+      // their order if any part of the delivery side is unavailable.
+      console.log("MFB ~ active order ~ tracking ~", err.message);
+    }
+
+    // Whether this delivery can be rated, and what was said if it already has
+    // been. Built here rather than on the client because "can I rate this?" is
+    // three facts the client does not hold: the job is delivered, it has a
+    // rider, and the schema for ratings exists at all.
+    let rating = null;
+    try {
+      const job = await loadTrackingJob(order.order_id);
+      if (job?.status === "delivered" && job.dp_id != null && (await ratingsReady())) {
+        const existing = await ratingForDelivery(job.do_id);
+        rating = {
+          do_id: job.do_id,
+          can_rate: true,
+          submitted: existing != null,
+          stars: existing?.stars ?? null,
+          tags: existing?.tags ?? [],
+          comment: existing?.comment ?? null,
+        };
+      }
+    } catch (err) {
+      // Never let the rating block cost someone their order screen.
+      console.log("MFB ~ active order ~ rating ~", err.message);
+    }
+
     res.status(200).json({
       order,
       rider,
+      delivery_otp: deliveryOtp,
+      delivery_stage: deliveryStage,
+      tracking,
+      rating,
+      pickup,
+      drop,
+      // So the client's clock skew cannot make a countdown lie.
+      server_time: Date.now(),
     });
   } catch (error) {
     console.error(error);
@@ -153,7 +378,62 @@ const getOrdersByCustomerId = async (req, res) => {
         },
       ],
     });
-    res.status(200).json(orders);
+
+    // Rating state, attached to the history list.
+    //
+    // The tracking screen carries the rating card, but a delivered order only
+    // stays on that screen for TERMINAL_ORDER_WINDOW_MIN (90 minutes) — after
+    // which the customer had no way to rate at all, even though the API accepts
+    // ratings for RATING_WINDOW_HOURS (72). History is where someone goes to
+    // find last night's order, so it is where the second chance belongs.
+    //
+    // One query for the whole page rather than one per order.
+    let withRating = orders;
+    try {
+      if (await ratingsReady()) {
+        const ids = orders.map((o) => o.order_id);
+        const rows = ids.length
+          ? await sequelize.query(
+              `SELECT d.\`source_order_id\` order_id, d.\`do_id\`, d.\`dp_id\`,
+                      d.\`status\`, d.\`delivered_at\`, r.\`stars\`
+                 FROM \`store_delivery_orders\` d
+                 LEFT JOIN \`store_delivery_ratings\` r ON r.\`do_id\` = d.\`do_id\`
+                WHERE d.\`source_order_id\` IN (:ids)`,
+              { replacements: { ids }, type: QueryTypes.SELECT }
+            )
+          : [];
+        const byOrder = new Map(rows.map((r) => [Number(r.order_id), r]));
+        const windowMs = Number(process.env.RATING_WINDOW_HOURS || 72) * 3600000;
+
+        withRating = orders.map((o) => {
+          const job = byOrder.get(Number(o.order_id));
+          const plain = o.toJSON();
+          if (!job || job.status !== "delivered" || job.dp_id == null) {
+            return { ...plain, rating: null };
+          }
+          const open =
+            !job.delivered_at ||
+            Date.now() - new Date(job.delivered_at).getTime() <= windowMs;
+          return {
+            ...plain,
+            rating: {
+              do_id: job.do_id,
+              can_rate: open || job.stars != null,
+              submitted: job.stars != null,
+              stars: job.stars != null ? Number(job.stars) : null,
+              // False once the window has closed, so the app can show the score
+              // it was given without offering to change it.
+              editable: open,
+            },
+          };
+        });
+      }
+    } catch (err) {
+      // History must render even if the delivery side is unavailable.
+      console.log("MFB ~ order history ~ rating ~", err.message);
+    }
+
+    res.status(200).json(withRating);
   } catch (error) {
     console.error(error);
     res
@@ -162,6 +442,8 @@ const getOrdersByCustomerId = async (req, res) => {
   }
 };
 
+// COD checkout. The paid path lives in controllers/payment.js — both share the
+// pricing and insert logic in util/orders.js.
 const createOrder = async (req, res) => {
   const { user_id } = req.user;
   const {
@@ -171,177 +453,34 @@ const createOrder = async (req, res) => {
     coupon_code,
     platform,
   } = req.body;
-  const product_ids = Object.keys(product_ids_with_quantity);
 
   try {
-    const productDetails = await Product.findAll({
-      where: {
-        product_id: product_ids,
-      },
-    });
-
-    const address = await Address.findByPk(address_id);
-    const business = await Business.findOne({
-      where: {
-        user_id: business_user_id,
-      },
-    });
-
-    const areaDetails = await Area.findOne({
-      where: {
-        [Op.and]: [
-          { area_id: address.delivery_city },
-          { area_user_id: business_user_id },
-        ],
-      },
-    });
-
-    const orderAmount = productDetails.reduce((prev, curr) => {
-      return (
-        prev + curr.product_mrp * product_ids_with_quantity[curr.product_id]
-      );
-    }, 0);
-
-    let businessDiscount = 0;
-
-    if (business.business_discount != null && business.business_discount > 0) {
-      businessDiscount = Math.floor(
-        orderAmount - orderAmount * ((100 - business.business_discount) / 100)
-      );
-    }
-
-    let rainCharges = 0;
-    if (business.business_rain_charges > 0) {
-      rainCharges = business.business_rain_charges;
-    }
-
-    const couponCodeDetails = getCouponCodeDetails({
-      code: coupon_code,
-      orderAmount,
+    const pricing = await priceCart({
+      address_id,
+      product_ids_with_quantity,
+      business_user_id,
+      coupon_code,
       platform,
     });
 
-    const delivery_charges =
-      couponCodeDetails.freeDelivery === true ||
-      orderAmount >= areaDetails.area_charge_free
-        ? 0
-        : areaDetails.area_charge;
-
-    const order_discount =
-      couponCodeDetails.discount > 0
-        ? couponCodeDetails.discount
-        : businessDiscount;
-
-    const newOrder = await StoreOrders.create({
-      customer_id: user_id,
-      vendor_id: business_user_id,
+    const newOrder = await createOrderRow({
+      user_id,
+      business_user_id,
       address_id,
-      rider_id: 1,
-      vendor_discount: 0,
-      order_amount: orderAmount - businessDiscount + rainCharges,
-      order_payment_type: "COD",
-      order_transaction_id: "CASH",
-      order_payment_status: 1,
-      order_payment_received: 0,
-      order_status: 0,
-      order_updated_by: user_id,
-      delivery_charges,
-      order_discount,
-      order_received_time: new Date().getTime() + 5.5 * 60 * 60 * 1000, // IST time
+      product_ids_with_quantity,
+      pricing,
+      // Matches the legacy PHP contract exactly (txn 'COD', unpaid). The rider
+      // screen keys off order_payment_status === 0 to show "collect cash".
+      payment: PAYMENT_COLUMNS.cod(),
     });
 
-    for (const product of productDetails) {
-      const product_qty = product_ids_with_quantity[product.product_id];
-      await StoreOrderDetails.create({
-        order_id: newOrder.order_id,
-        product_id: product.product_id,
-        product_qty,
-        product_mrp: product.product_mrp,
-        product_price: 0,
-        product_discount: 0,
-        product_total: product.product_mrp * product_qty,
-        product_available: 1,
-      });
-    }
+    const orderResponse = await findOrderById(newOrder.order_id);
 
-    const orderResponse = await StoreOrders.findOne({
-      attributes: [
-        "order_id",
-        "customer_id",
-        "vendor_id",
-        "address_id",
-        "rider_id",
-        "vendor_discount",
-        "order_amount",
-        "order_discount",
-        "delivery_charges",
-        "order_amount_paid",
-        "order_profit",
-        "order_payment_type",
-        "order_transaction_id",
-        "order_payment_status",
-        "order_payment_received",
-        "order_received_time",
-        "order_delivered_time",
-        "order_status",
-        "order_updated_by",
-      ],
-      where: {
-        order_id: newOrder.order_id,
-      },
-      order: [["order_received_time", "DESC"]],
-      include: [
-        {
-          model: StoreOrderDetails,
-          attributes: [
-            "order_detail_id",
-            "product_id",
-            "product_qty",
-            "product_mrp",
-            // "product_name",
-            "product_price",
-            "product_discount",
-            "product_total",
-            "product_available",
-          ],
-          include: {
-            model: Product,
-            attributes: ["product_name"],
-          },
-        },
-        {
-          model: Business,
-          attributes: ["business_name", "user_id"],
-        },
-      ],
+    await runPostOrderSideEffects({
+      user_id,
+      order_id: newOrder.order_id,
+      total_amount: pricing.payable,
     });
-
-    // Fetch user details for sendmailapi call
-    const userDetails = await User.findByPk(user_id, {
-      attributes: ["user_name", "user_phone"],
-    });
-
-    // Call sendmailapi after successful order creation
-    try {
-      const emailApiPayload = {
-        user_name: userDetails.user_name || "Unknown User",
-        user_phone: userDetails.user_phone || "0000000000",
-        total_amount: orderAmount - businessDiscount + rainCharges + delivery_charges,
-        order_id: newOrder.order_id.toString(),
-      };
-
-      await axios.post("https://myfirstbite.in/Api/sendmailapi", emailApiPayload, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-        timeout: 10000, // 10 second timeout
-      });
-
-      console.log("Email notification sent successfully for order:", newOrder.order_id);
-    } catch (emailError) {
-      // Log the error but don't fail the order creation
-      console.error("Failed to send email notification:", emailError.message);
-    }
 
     res
       .status(201)
@@ -369,5 +508,6 @@ module.exports = {
   getOrdersByCustomerId,
   createOrder,
   getActiveOrders,
+  getOrderRoute,
   getCouponCodeDiscountDetails,
 };

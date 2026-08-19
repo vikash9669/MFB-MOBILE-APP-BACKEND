@@ -1,6 +1,6 @@
 const DeliveryPartner = require("../models/delivery_partner");
 const { generateUserCode } = require("../util/user");
-const { initiateOtp, verifyOtp } = require("../util/otpless");
+const { initiateOtp, verifyOtp } = require("../util/otp");
 const { maybeProvisionOnLogin } = require("../util/deliveryDemo");
 const {
   signAccessToken,
@@ -23,6 +23,8 @@ const partnerClaims = (partner) => ({
   dp_email: partner.dp_email,
   dp_phone: partner.dp_phone,
   role: "delivery_partner",
+  // So the app can route to the onboarding gate immediately after login.
+  verification_status: partner.dp_verification_status || "pending",
   settings: partner.dp_settings || DEFAULT_SETTINGS,
 });
 
@@ -85,7 +87,7 @@ exports.verifyOtp = async (req, res) => {
       return;
     }
 
-    const { verified } = await verifyOtp(partner.dp_request_id, user_otp);
+    const { verified } = await verifyOtp(phone_number, partner.dp_request_id, user_otp);
     if (!verified) {
       res.status(401).json({ message: "Invalid or expired OTP" });
       return;

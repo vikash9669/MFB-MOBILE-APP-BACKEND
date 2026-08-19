@@ -16,9 +16,17 @@ const DeliveryOrder = require("./delivery_order");
 const DeliveryOrderEvent = require("./delivery_order_event");
 const DeliveryWalletTxn = require("./delivery_wallet_txn");
 const DeliveryShift = require("./delivery_shift");
+const DeliverySession = require("./delivery_session");
+const DeliverySessionPoint = require("./delivery_session_point");
 const DeliveryDocument = require("./delivery_document");
 const DeliveryNotification = require("./delivery_notification");
 const DeliveryDevice = require("./delivery_device");
+const UserDevice = require("./user_device");
+const UserNotification = require("./user_notification");
+const PaymentIntent = require("./payment_intent");
+const Category = require("./category");
+const UserBank = require("./user_bank");
+const Cashback = require("./cashback");
 
 Business.hasMany(Menu, {
   foreignKey: "menu_user_id",
@@ -122,6 +130,10 @@ DeliveryWalletTxn.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "
 
 DeliveryPartner.hasMany(DeliveryShift, { foreignKey: "dp_id", sourceKey: "dp_id", as: "shifts" });
 DeliveryShift.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+DeliveryPartner.hasMany(DeliverySession, { foreignKey: "dp_id", sourceKey: "dp_id", as: "sessions" });
+DeliverySession.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+DeliverySession.hasMany(DeliverySessionPoint, { foreignKey: "session_id", sourceKey: "session_id", as: "points" });
+DeliverySessionPoint.belongsTo(DeliverySession, { foreignKey: "session_id", targetKey: "session_id" });
 
 DeliveryPartner.hasMany(DeliveryDocument, { foreignKey: "dp_id", sourceKey: "dp_id", as: "documents" });
 DeliveryDocument.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
@@ -131,6 +143,17 @@ DeliveryNotification.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey
 
 DeliveryPartner.hasMany(DeliveryDevice, { foreignKey: "dp_id", sourceKey: "dp_id", as: "devices" });
 DeliveryDevice.belongsTo(DeliveryPartner, { foreignKey: "dp_id", targetKey: "dp_id" });
+
+// ── Customer push devices + in-app notifications (store_user_*) ─────────
+User.hasMany(UserDevice, { foreignKey: "user_id", sourceKey: "user_id", as: "devices" });
+UserDevice.belongsTo(User, { foreignKey: "user_id", targetKey: "user_id" });
+
+User.hasMany(UserNotification, { foreignKey: "user_id", sourceKey: "user_id", as: "notifications" });
+UserNotification.belongsTo(User, { foreignKey: "user_id", targetKey: "user_id" });
+
+// ── Payment intents (checkout parked while the customer is in PhonePe) ──
+User.hasMany(PaymentIntent, { foreignKey: "customer_id", sourceKey: "user_id", as: "payment_intents" });
+PaymentIntent.belongsTo(User, { foreignKey: "customer_id", targetKey: "user_id" });
 
 module.exports = {
   User,
@@ -151,7 +174,15 @@ module.exports = {
   DeliveryOrderEvent,
   DeliveryWalletTxn,
   DeliveryShift,
+  DeliverySession,
+  DeliverySessionPoint,
   DeliveryDocument,
   DeliveryNotification,
   DeliveryDevice,
+  UserDevice,
+  UserNotification,
+  PaymentIntent,
+  Category,
+  UserBank,
+  Cashback,
 };

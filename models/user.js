@@ -51,6 +51,16 @@ const User = sequelize.define(
       type: DataTypes.STRING(12),
       allowNull: false,
     },
+    // store_users.user_location is `int NOT NULL` with no database default, and
+    // the model didn't declare it — so every INSERT (i.e. every new customer
+    // signup) failed under MySQL strict mode with ER_NO_DEFAULT_FOR_FIELD.
+    // Existing users were unaffected, since logging in does no INSERT, which is
+    // why this stayed hidden. 0 is what 19,966 of ~20,000 existing rows hold.
+    user_location: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
     user_address: {
       type: DataTypes.STRING(255),
       allowNull: true,

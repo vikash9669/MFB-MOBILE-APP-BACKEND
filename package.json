@@ -3,12 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "startsss": "nodemon --env-file=.env app.js",
-    "start": "node app.js",
+    "dev": "nodemon --env-file=.env app.js",
+    "start": "node --env-file-if-exists=.env app.js",
     "seed": "node --env-file=.env scripts/seed.js",
     "migrate:delivery": "node --env-file=.env scripts/migrate-delivery.js",
     "seed:delivery": "node --env-file=.env scripts/seed-delivery.js",
-    "lint": "eslint ./"
+    "lint": "eslint ./",
+    "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
     "axios": "^1.12.2",

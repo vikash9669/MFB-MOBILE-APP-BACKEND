@@ -119,6 +119,8 @@ async function provisionDemoData(partner, { force = false } = {}) {
 
   // ── Partner profile / stats ──────────────────────────────────────
   await partner.update({
+    // Demo/seeded partners are pre-approved so the app is usable immediately.
+    dp_verification_status: "approved",
     dp_name: partner.dp_name || "Rahul Kumar",
     dp_email: partner.dp_email || "rahul.partner@myfirstbite.in",
     dp_vehicle_type: "Bike",

@@ -80,6 +80,76 @@ const isDeadTokenError = (status, body) => {
   );
 };
 
+/**
+ * Builds the FCM v1 message body.
+ *
+ * TWO SHAPES, and the difference matters:
+ *
+ *   normal   — carries a `notification` block. Android draws it itself, which
+ *              is what we want for "wallet credited" and the like: it shows
+ *              even if the app is dead and needs no client code.
+ *
+ *   call     — DATA-ONLY. A message with a `notification` block is rendered by
+ *              the OS, and the OS will not raise a full-screen intent for it.
+ *              A call-style incoming delivery therefore has to arrive as pure
+ *              data so the app builds the notification itself through Notifee,
+ *              with the ringtone, the lock-screen takeover and the accept
+ *              action attached. Sending both would produce two notifications.
+ *
+ * Call messages also get a short TTL: an offer that expires in 25 seconds is
+ * worse than useless if it lands five minutes later, ringing for a job that has
+ * already gone to somebody else.
+ */
+function buildMessage(token, message, dataPayload) {
+  if (message.call) {
+    return {
+      message: {
+        token,
+        // Deliberately no `notification` block — see above.
+        data: {
+          ...dataPayload,
+          // The app renders these; they are data, not an OS notification.
+          title: String(message.title ?? ""),
+          body: String(message.body ?? ""),
+          call: "1",
+        },
+        android: {
+          priority: "high",
+          ttl: `${Math.max(1, Number(message.ttlSec) || 30)}s`,
+        },
+        apns: {
+          headers: {
+            "apns-priority": "10",
+            "apns-push-type": "alert",
+            "apns-expiration": "0",
+          },
+          // iOS cannot do an Android-style full-screen intent from a data push;
+          // it gets a normal high-priority alert with a critical-ish sound.
+          payload: {
+            aps: {
+              alert: { title: message.title, body: message.body },
+              sound: "delivery_ring.caf",
+              "content-available": 1,
+            },
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    message: {
+      token,
+      notification: { title: message.title, body: message.body },
+      data: dataPayload,
+      // No channel_id: use FCM's auto-created default channel so
+      // notifications always display without the app pre-registering one.
+      android: { priority: "high" },
+      apns: { headers: { "apns-priority": "10" } },
+    },
+  };
+}
+
 // Sends one notification to many tokens. FCM v1 has no multicast, so we fan out
 // (partners have only a handful of devices). Returns the tokens FCM rejected as
 // permanently dead so the caller can prune them.
@@ -116,17 +186,7 @@ const sendToTokens = async (tokens, message) => {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            message: {
-              token,
-              notification: { title: message.title, body: message.body },
-              data: dataPayload,
-              // No channel_id: use FCM's auto-created default channel so
-              // notifications always display without the app pre-registering one.
-              android: { priority: "high" },
-              apns: { headers: { "apns-priority": "10" } },
-            },
-          }),
+          body: JSON.stringify(buildMessage(token, message, dataPayload)),
         });
         if (res.ok) {
           sent += 1;

@@ -10,7 +10,7 @@ const { DeliveryNotification, DeliveryDevice } = require("../models");
 const { sendToTokens } = require("./fcm");
 
 // Creates the notification row, then fans out a push. Returns the created row.
-const notifyPartner = async (dpId, { category, icon, title, body, data } = {}) => {
+const notifyPartner = async (dpId, { category, icon, title, body, data, call, ttlSec } = {}) => {
   const notif = await DeliveryNotification.create({
     dp_id: dpId,
     category: category || "system",
@@ -21,9 +21,13 @@ const notifyPartner = async (dpId, { category, icon, title, body, data } = {}) =
   });
 
   // Push out-of-band; swallow every error so the caller's flow is unaffected.
+  // `call` turns this into a data-only, ringing, full-screen alert rather than
+  // a tray notification — used for delivery offers, which expire.
   pushToDevices(dpId, {
     title,
     body: body || "",
+    call: Boolean(call),
+    ttlSec,
     data: { ...(data || {}), notif_id: notif.notif_id, category: category || "system" },
   }).catch((err) => console.log("MFB-error-logs ~ notifyPartner push ~ err:", err.message));
 
