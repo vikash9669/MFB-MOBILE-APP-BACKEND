@@ -27,6 +27,7 @@ const crypto = require("node:crypto");
 const { PaymentIntent, DeliveryOrder, StoreOrders } = require("../models");
 const phonepe = require("./phonepe");
 const dqr = require("./phonepeDqr");
+const origins = require("./origins");
 const { collectionReady } = require("./collectionColumns");
 const { notifyUser } = require("./customerNotify");
 const { notifyPartner } = require("./deliveryNotify");
@@ -44,11 +45,6 @@ const rupees = (n) => Math.round(Number(n || 0) * 100) / 100;
 
 // Character-walk rather than a regex: /\/+$/ backtracks badly on a long
 // pathological string, and this runs on a request path.
-const trimTrailingSlashes = (s) => {
-  let end = s.length;
-  while (end > 0 && s[end - 1] === "/") end -= 1;
-  return s.slice(0, end);
-};
 
 /** The amount still owed in cash on this job. */
 const outstanding = (job) => rupees(job.cash_to_collect);
@@ -161,7 +157,10 @@ async function startCollection({ doId, dpId }) {
       // Where PhonePe sends the CUSTOMER'S browser after paying. They are on
       // their own phone, not the rider's, so this points at the storefront's
       // return page rather than anything in the delivery app.
-      redirectUrl: `${trimTrailingSlashes(String(process.env.STOREFRONT_URL || "http://localhost:5173"))}/payment/return?txn=${encodeURIComponent(merchantTxnId)}`,
+      // No browser request here to read an Origin from, so this one is
+      // configuration-only — but it falls back to the CORS allowlist rather
+      // than a bare localhost literal.
+      redirectUrl: `${origins.webBase(null)}/payment/return?txn=${encodeURIComponent(merchantTxnId)}`,
     });
     payload = hosted.redirectUrl;
   }

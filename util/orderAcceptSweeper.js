@@ -30,6 +30,7 @@ const { Op } = require("sequelize");
 const { StoreOrders, User, Business } = require("../models");
 const { alertVendorNewOrder } = require("./vendorAlerts");
 const { cancelOrder } = require("./orderLifecycle");
+const origins = require("./origins");
 
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -90,7 +91,7 @@ async function remind(order, entry) {
     itemCount: 0,
     total: orderTotal(order),
     acceptUrl:
-      (process.env.PANEL_URL || "http://localhost:5173").replace(/\/$/, "") +
+      (process.env.PANEL_URL ? process.env.PANEL_URL.replace(/\/$/, "") : origins.webBase(null)) +
       "/vendor/portal/new-orders",
     reminder: entry.reminders + 1,
   });

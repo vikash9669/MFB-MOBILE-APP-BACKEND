@@ -54,16 +54,13 @@ app.use(express.json({ limit: "6mb" }));
 // so :5174 is no longer used. The mobile apps are native and unaffected.
 // Origins are configurable via ADMIN_PANEL_ORIGINS (comma-separated); the Vite
 // default is allowed so a fresh checkout works without extra setup.
-const ADMIN_ORIGINS = (
-  process.env.ADMIN_PANEL_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173"
-)
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
+// The list itself lives in util/origins.js, because the payment return uses the
+// same one to decide where a customer may be sent back to.
+const origins = require("./util/origins");
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && ADMIN_ORIGINS.includes(origin)) {
+  if (origins.allows(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");

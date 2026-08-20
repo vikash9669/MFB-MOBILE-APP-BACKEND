@@ -26,7 +26,13 @@ const trimTrailingSlashes = (s) => {
   while (end > 0 && s[end - 1] === "/") end -= 1;
   return s.slice(0, end);
 };
-const PANEL_URL = trimTrailingSlashes(process.env.PANEL_URL || "http://localhost:5173");
+// Staff alert links. No browser request is involved when a sweeper sends one,
+// so this is configuration-first, falling back to the CORS allowlist instead
+// of a localhost literal that would ship dead links to real phones.
+const origins = require("../../util/origins");
+const PANEL_URL = process.env.PANEL_URL
+  ? trimTrailingSlashes(process.env.PANEL_URL)
+  : origins.webBase(null);
 
 // Admin staff are roles 0/1/2 (see middlewares/verifyAdmin.js).
 const ADMIN_ROLES = [0, 1, 2];

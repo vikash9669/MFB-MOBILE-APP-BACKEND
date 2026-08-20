@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { PaymentIntent } = require("../models");
 const phonepe = require("../util/phonepe");
+const origins = require("../util/origins");
 const { priceCart, findOrderById } = require("../util/orders");
 // Order creation from a paid intent lives in one place, shared with the
 // webhook and the reconciliation sweeper — see util/paymentSettlement.js.
@@ -14,11 +15,6 @@ const dqr = require("../util/phonepeDqr");
 
 const ONLINE_METHODS = ["UPI", "CARD"];
 
-const trimTrailingSlashes = (s) => {
-  let end = s.length;
-  while (end > 0 && s[end - 1] === "/") end -= 1;
-  return s.slice(0, end);
-};
 
 const newMerchantTxnId = (user_id) =>
   // Bounded to PhonePe's 38-char limit for merchantTransactionId.
@@ -91,13 +87,18 @@ const initiatePayment = async (req, res) => {
     if (isWeb) {
       // Where PhonePe sends the customer's browser once they are done.
       //
-      // Unlike the webhook, this does NOT need to be publicly reachable: the
+      // Taken from the origin this request came from, checked against the CORS
+      // allowlist — the customer is demonstrably already there, so it cannot be
+      // stale the way configuration can. STOREFRONT_URL remains the fallback.
+      //
+      // This used to read configuration first, and an unset STOREFRONT_URL on a
+      // deployed host meant "http://localhost:5173": customers who had really
+      // paid were redirected to their own machine and saw a dead page.
+      //
+      // Unlike the webhook, this does NOT need to be publicly reachable — the
       // redirect is performed by the customer's own browser, so localhost is
-      // correct while testing on the same machine. Set STOREFRONT_URL to the
-      // real origin in production.
-      const base = trimTrailingSlashes(
-        process.env.STOREFRONT_URL || process.env.PANEL_URL || "http://localhost:5173"
-      );
+      // still correct when testing on one machine.
+      const base = origins.webBase(req);
       const redirectUrl = `${base}/payment/return?txn=${encodeURIComponent(
         merchantTransactionId
       )}`;
