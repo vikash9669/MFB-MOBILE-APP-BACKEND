@@ -16,8 +16,9 @@ const {
   Area,
 } = require("../models");
 
-// Must match DEFAULT_CITY_PINCODE in controllers/products.js — the restaurant
-// listing only returns vendors whose user_zip equals the requested pincode.
+// Seed vendors all sit in one pincode. Nothing filters on it — user_zip is
+// just a required column — but keeping them consistent makes seeded data look
+// like a real single-city deployment.
 const PINCODE = "312601";
 
 const restaurants = [

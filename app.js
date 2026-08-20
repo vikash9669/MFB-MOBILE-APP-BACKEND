@@ -23,6 +23,7 @@ const healthRoutes = require("./routes/health");
 const liveSend = require("./util/liveSend");
 const { ensureSchema, pending } = require("./util/schema");
 const { reportBoot, reportListening, reportFatal } = require("./util/startupReport");
+const { requestLog } = require("./middlewares/requestLog");
 
 // Every per-IP rate limit reads req.ip, which Express derives from the socket
 // unless it is told a proxy sits in front. Behind nginx or a load balancer that
@@ -40,6 +41,10 @@ if (process.env.TRUST_PROXY) {
   const hops = Number(raw);
   app.set("trust proxy", Number.isInteger(hops) && hops >= 0 ? hops : raw === "true" ? true : raw);
 }
+
+// Before the routers, so every request is logged whichever one answers it —
+// including the 404s that no router claims.
+app.use(requestLog);
 
 app.use(express.json({ limit: "6mb" }));
 

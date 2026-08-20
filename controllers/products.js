@@ -8,20 +8,6 @@ const {
 } = require("../models/index");
 const { Op } = require("sequelize");
 
-// Which city the storefront shows when the caller names no pincode.
-//
-// The customer app currently calls GET /restaurant with no cityPincode at all
-// (see the getRestaurants thunk), so in practice this is not a fallback — it
-// decides the city for every customer. That makes it config rather than a
-// constant: pointing a test build at another city should not need a code edit.
-//
-// Nimbahera (312601) stays the default because that is where the live vendors
-// are. Set DEFAULT_CITY_PINCODE to override, e.g. 452010 for Indore.
-//
-// The real fix is for the app to send the pincode of the selected delivery
-// address; until it does, only one city is reachable at a time.
-const DEFAULT_CITY_PINCODE = process.env.DEFAULT_CITY_PINCODE || "312601";
-
 const getRestaurants = async (req, res) => {
   try {
     const restaurants = await Business.findAll({
@@ -189,8 +175,16 @@ const getBusinessByMenuId = async (req, res) => {
   }
 };
 
+// Lists every active vendor.
+//
+// There is deliberately no city filter here. This used to scope the listing to
+// a single pincode from configuration, which meant one city was reachable at a
+// time and a deployment pointed at a city with no vendors returned an empty
+// storefront with a 200 — indistinguishable from "no restaurants" rather than
+// reading as the misconfiguration it was. If per-city listings are wanted
+// again, they should come from the customer's selected delivery address, not
+// from a server-wide setting.
 const getRestaurantsList = async (req, res) => {
-  const city_pincode = req.query.cityPincode || DEFAULT_CITY_PINCODE;
   try {
     const businesses = await Business.findAll({
       where: {
@@ -227,78 +221,85 @@ const getRestaurantsList = async (req, res) => {
       ],
     });
 
-    const response = [];
+    // Decide who is in the response before doing any further lookups — there is
+    // no point paying for the menus and areas of a vendor we are about to drop.
+    // A business whose owner row is missing is skipped rather than crashing the
+    // whole listing on a null user.
+    const visible = businesses.filter(
+      (business) => business.user && business.user.user_active
+    );
 
-    for (const business of businesses) {
-      // business_menu_types is a comma-separated list of menu ids kept as text.
-      // A vendor with none configured stores "" (or NULL), and "".split(",")
-      // is [""] — parseInt of which is NaN. That reached the query as
-      // `menu_id IN (NaN)`, which MySQL rejects as an unknown column, and the
-      // 500 took down the whole storefront listing rather than just that one
-      // restaurant. Filter to real ids, and skip the lookup when none remain.
-      const menuIds = String(business.business_menu_types || "")
+    // business_menu_types is a comma-separated list of menu ids kept as text.
+    // A vendor with none configured stores "" (or NULL), and "".split(",") is
+    // [""] — parseInt of which is NaN. That reached the query as
+    // `menu_id IN (NaN)`, which MySQL rejects as an unknown column, and the 500
+    // took down the whole storefront listing rather than just that one
+    // restaurant. Filter to real ids.
+    const menuIdsFor = (business) =>
+      String(business.business_menu_types || "")
         .split(",")
         .map((id) => parseInt(id.trim(), 10))
         .filter(Number.isInteger);
 
-      const menuItems = menuIds.length
-        ? await Menu.findAll({
+    // Two bulk queries rather than two per vendor. The per-vendor version issued
+    // 2N round-trips — with ~65 vendors and the database in another datacentre
+    // that was over 30 seconds, past the storefront's own request timeout, so
+    // the listing never arrived however healthy the server was.
+    const allMenuIds = [...new Set(visible.flatMap(menuIdsFor))];
+    const userIds = [...new Set(visible.map((b) => b.user_id))];
+
+    const [menus, areas] = await Promise.all([
+      allMenuIds.length
+        ? Menu.findAll({
             attributes: ["menu_id", "menu_name"],
-            where: {
-              menu_id: {
-                [Op.in]: menuIds,
-              },
-            },
+            where: { menu_id: { [Op.in]: allMenuIds } },
           })
-        : [];
+        : [],
+      userIds.length
+        ? Area.findAll({
+            attributes: [
+              "area_id",
+              "area_checkout",
+              "area_charge",
+              "area_charge_free",
+              "area_status",
+              "area_user_id",
+            ],
+            where: { area_user_id: { [Op.in]: userIds } },
+            include: [{ model: Location, as: "location" }],
+          })
+        : [],
+    ]);
 
-      const areas = await Area.findAll({
-        attributes: [
-          "area_id",
-          "area_checkout",
-          "area_charge",
-          "area_charge_free",
-          "area_status",
-          "area_user_id",
-        ],
-        where: {
-          area_user_id: business.user_id,
-        },
-        include: [
-          {
-            model: Location,
-            as: "location",
-          },
-        ],
-      });
-
-      const businessData = {
-        business_id: business.business_id,
-        user_id: business.user_id,
-        business_name: business.business_name,
-        business_open: business.business_open,
-        business_close: business.business_close,
-        business_slug: business.business_slug,
-        business_offer_text: business.business_offer_text,
-        business_status: business.business_status,
-        business_fssai: business.business_fssai,
-        business_discount: business.business_discount,
-        business_rain_charges: business.business_rain_charges,
-        menus: menuItems.map((menu) => ({
-          menu_id: menu.menu_id,
-          menu_name: menu.menu_name,
-        })),
-        user: business.user,
-        areas,
-      };
-
-      if (
-        businessData.user.user_active &&
-        businessData.user.user_zip === city_pincode
-      ) {
-        response.push(businessData);
-      }
+    const menuById = new Map(menus.map((m) => [m.menu_id, m]));
+    const areasByUser = new Map();
+    for (const area of areas) {
+      const list = areasByUser.get(area.area_user_id);
+      if (list) list.push(area);
+      else areasByUser.set(area.area_user_id, [area]);
     }
+
+    const response = visible.map((business) => ({
+      business_id: business.business_id,
+      user_id: business.user_id,
+      business_name: business.business_name,
+      business_open: business.business_open,
+      business_close: business.business_close,
+      business_slug: business.business_slug,
+      business_offer_text: business.business_offer_text,
+      business_status: business.business_status,
+      business_fssai: business.business_fssai,
+      business_discount: business.business_discount,
+      business_rain_charges: business.business_rain_charges,
+      // Keep the vendor's own ordering, and skip ids pointing at menus that no
+      // longer exist rather than emitting nulls the client would have to guard.
+      menus: menuIdsFor(business)
+        .map((id) => menuById.get(id))
+        .filter(Boolean)
+        .map((menu) => ({ menu_id: menu.menu_id, menu_name: menu.menu_name })),
+      user: business.user,
+      areas: areasByUser.get(business.user_id) || [],
+    }));
 
     res.status(200).json(response);
   } catch (error) {

@@ -63,7 +63,6 @@ services:
       - { key: MSGPROVIDER,            value: twilio }
       - { key: CUSTOMER_ALERT_CHANNELS, value: sms }
       - { key: VENDOR_ALERT_CHANNELS,  value: sms }
-      - { key: DEFAULT_CITY_PINCODE,   value: "452010" }
       - { key: AUTO_MIGRATE,           value: "true" }
       - { key: OTP_DEV_MODE,           value: "false" }
       # Leave OTP_DEV_NUMBERS and LIVE_SEND_ALLOWLIST UNSET in production.
