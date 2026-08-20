@@ -18,6 +18,7 @@
 // keeps the old panel behaviour untouched — this only ever adds.
 const crypto = require("crypto");
 const { User, DeliveryPartner } = require("../models");
+const passwords = require("./password");
 
 const RIDER_ROLE = 3;
 
@@ -75,7 +76,10 @@ async function ensurePanelRider(partner) {
     user_state: 1,
     user_zip: "000000",
     user_location: 0,
-    user_password: crypto.randomBytes(24).toString("hex"),
+    // Hashed like any other, so nothing downstream has to treat this column
+    // as sometimes-raw. The value is random and never handed out, so the
+    // account stays unusable until someone sets a real password.
+    user_password: passwords.hash(crypto.randomBytes(24).toString("hex")),
     user_registered: new Date(),
     user_login: 0,
     // Approved in the app, so listed and able to take orders straight away.

@@ -10,6 +10,7 @@ const { User, Business, UserBank, Location } = require("../../models");
 // util/vendorColumns.js for why naming them there would break sign-in on any
 // database that has not run 2026-08-18-vendor-geo.sql.
 const { parsePin, writePin } = require("../../util/vendorColumns");
+const passwords = require("../../util/password");
 const {
   ADMIN_ROLES,
   VENDOR_ROLE,
@@ -69,7 +70,7 @@ exports.create = async (req, res) => {
       user_city: city != null ? String(city) : "1",
       user_state: num(state) || 1,
       // Plaintext, matching the existing scheme — see ADMIN_PANEL_MIGRATION.md.
-      user_password: String(password),
+      user_password: passwords.hash(password),
       user_registered: new Date(),
       user_status: 1,
     });
@@ -129,7 +130,7 @@ exports.update = async (req, res) => {
       if (String(req.body.password).length < 6) {
         return res.status(400).json({ message: "Password must be at least 6 characters" });
       }
-      patch.user_password = String(req.body.password);
+      patch.user_password = passwords.hash(req.body.password);
     }
 
     if (req.body.role !== undefined) {

@@ -8,15 +8,16 @@
 //   • terms must be accepted
 //   • a 6-digit OTP is texted and must be confirmed before the account activates
 //
-// Deliberate fix: Profile::Password wrote md5($password) while _Login compared
-// the column in plaintext, so changing a password through the PHP panel locked
-// the account out permanently. Everything here writes plaintext, consistent with
-// how login actually reads it. See ADMIN_PANEL_MIGRATION.md.
+// Passwords are md5 digests, matching the PHP panel. _Login does compare the
+// column directly, but Index::Index has already replaced the submitted password
+// with md5($password) before calling it — reading the model alone suggests a
+// plaintext comparison that does not exist. See util/password.js.
 const jwt = require("jsonwebtoken");
 const { User, Business } = require("../../models");
 const { initiateOtp, verifyOtp } = require("../../util/otp");
 const { parsePin, writePin } = require("../../util/vendorColumns");
 const { RIDER_ROLE, VENDOR_ROLE, scopeFor } = require("../../middlewares/verifyAdmin");
+const passwords = require("../../util/password");
 
 // The PHP dropdown offered exactly these. Admin accounts are made by an admin.
 const SELF_SIGNUP_ROLES = [RIDER_ROLE, VENDOR_ROLE];
@@ -101,7 +102,7 @@ exports.register = async (req, res) => {
       user_state: 1,
       user_zip: "000000",
       user_location: 0,
-      user_password: String(password),
+      user_password: passwords.hash(password),
       user_registered: new Date(),
       user_login: 0,
       user_active: 1,
@@ -257,7 +258,7 @@ exports.resetPassword = async (req, res) => {
 
     // Plaintext, matching what login reads. The PHP wrote md5 here and broke
     // the account — see the header comment.
-    await user.update({ user_password: String(password) });
+    await user.update({ user_password: passwords.hash(password) });
 
     res.json({ message: "Password updated. You can sign in now." });
   } catch (err) {

@@ -4,13 +4,13 @@
 // keep working: identifier may be either user_email or user_phone, and the
 // password is compared against store_users.user_password.
 //
-// ⚠️ Those passwords are stored in PLAINTEXT (User_Model::_Login compares them
-// with a direct WHERE). We preserve that comparison so nobody is locked out,
-// but it should be migrated to bcrypt — see ADMIN_PANEL_MIGRATION.md.
+// Passwords are md5 digests, as the PHP panel wrote them — see util/password.js
+// for why that is matched rather than replaced, and what replacing it needs.
 const { Op } = require("sequelize");
 const jwt = require("jsonwebtoken");
 const { User, Business } = require("../../models");
 const { canUsePanel, scopeFor } = require("../../middlewares/verifyAdmin");
+const passwords = require("../../util/password");
 
 const TOKEN_TTL = "12h";
 
@@ -36,16 +36,15 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: "Enter your username and password" });
     }
 
+    // Look the account up by identifier alone, then check the password in
+    // Node. The password can no longer be part of the WHERE clause: what is
+    // stored is a digest of it, and older development rows hold it raw, so the
+    // comparison depends on the shape of the stored value.
     const user = await User.findOne({
-      where: {
-        [Op.and]: [
-          { user_password: String(password) },
-          { [Op.or]: [{ user_email: username }, { user_phone: username }] },
-        ],
-      },
+      where: { [Op.or]: [{ user_email: username }, { user_phone: username }] },
     });
 
-    if (user == null) {
+    if (user == null || !passwords.matches(user.user_password, password)) {
       return res.status(401).json({ message: "Invalid username or password" });
     }
     if (!canUsePanel(user.user_role)) {
@@ -118,10 +117,10 @@ exports.changePassword = async (req, res) => {
       return res.status(400).json({ message: "New password must be at least 6 characters" });
     }
     const user = await User.findByPk(req.panel.user_id);
-    if (user == null || String(user.user_password) !== String(current_password)) {
+    if (user == null || !passwords.matches(user.user_password, current_password)) {
       return res.status(401).json({ message: "Current password is incorrect" });
     }
-    await user.update({ user_password: String(new_password) });
+    await user.update({ user_password: passwords.hash(new_password) });
     res.json({ message: "Password updated" });
   } catch (err) {
     console.log("MFB-error-logs ~ admin changePassword ~ err:", err);
