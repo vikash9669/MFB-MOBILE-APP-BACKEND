@@ -297,7 +297,9 @@ exports.accept = async (req, res) => {
       riderName: req.user?.dp_name,
     })
       .then((r) => {
-        if (!r.sent && !r.dryRun) {
+        // Every non-send is now a real problem worth logging — the dry-run case
+        // that used to be excluded here no longer exists.
+        if (!r.sent) {
           console.log(`MFB ~ delivery otp sms ~ #${order.do_id} not sent: ${r.reason}`);
         }
       })

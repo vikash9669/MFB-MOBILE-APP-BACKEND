@@ -16,7 +16,6 @@ const BASE = {
   TWILIO_WHATSAPP_FROM: "+14155238886",
   TWILIO_SMS_FROM: "+14155238887",
   CUSTOMER_ALERT_CHANNELS: undefined,
-  CUSTOMER_ALERT_DRY_RUN: undefined,
   // Keep the delivery-confirmation wait short. In production notify() waits a
   // few seconds for Twilio to move the message off "queued" before it believes
   // the send worked; tests do not need to sit through that.
@@ -123,14 +122,16 @@ test("the message carries the code and warns against sharing it on a call", asyn
   );
 });
 
-test("dry run sends nothing at all", async () => {
+test("no enabled channels means no send", async () => {
   const alerts = load();
-  await withEnv({ ...BASE, CUSTOMER_ALERT_DRY_RUN: "true" }, () =>
+  // CUSTOMER_ALERT_DRY_RUN used to be the way to stop a send without touching
+  // credentials. It was removed, so an empty channel list is now the only off
+  // switch there is, and it had better work.
+  await withEnv({ ...BASE, CUSTOMER_ALERT_CHANNELS: "" }, () =>
     withFetch(ok, async (calls) => {
       const r = await alerts.sendDeliveryOtp({ phone: "9876543210", orderId: 1, otp: "111111" });
       assert.equal(r.sent, false);
-      assert.equal(r.dryRun, true);
-      assert.equal(calls.length, 0, "a staging box must not text real customers");
+      assert.equal(calls.length, 0, "nothing may reach Twilio with no channel enabled");
     })
   );
 });
@@ -238,8 +239,13 @@ test("WhatsApp goes out as a template when one is configured, SMS stays plain te
       assert.equal(calls[0].body.get("ContentSid"), "HXtest123");
       assert.equal(calls[0].body.get("Body"), null);
 
+      // Exactly one variable, and it is the code. Meta forces OTP content into
+      // the AUTHENTICATION category, which accepts a single variable and owns
+      // the body text — sending the rider name and order number too would fail
+      // the send outright rather than just dropping them.
       const vars = JSON.parse(calls[0].body.get("ContentVariables"));
-      assert.deepEqual(vars, { 1: "Ramesh", 2: "272401", 3: "817412" });
+      assert.deepEqual(vars, { 1: "817412" });
+
     })
   );
 
@@ -247,9 +253,21 @@ test("WhatsApp goes out as a template when one is configured, SMS stays plain te
   // keeps working before approval comes through.
   await withEnv(BASE, () =>
     withFetch(ok, async (calls) => {
-      const r = await alerts.sendDeliveryOtp({ phone: "9876543210", orderId: 1, otp: "111111" });
+      const r = await alerts.sendDeliveryOtp({
+        phone: "9876543210",
+        orderId: 272401,
+        otp: "111111",
+        riderName: "Ramesh",
+      });
       assert.equal(r.templated, false);
-      assert.match(calls[0].body.get("Body"), /111111/);
+
+      // Free-form carries everything the authentication template cannot: who is
+      // coming and which order. If this regresses, a customer whose WhatsApp
+      // template did go through gets a bare code and nothing else anywhere.
+      const body = calls[0].body.get("Body");
+      assert.match(body, /111111/);
+      assert.match(body, /Ramesh/);
+      assert.match(body, /272401/);
     })
   );
 });

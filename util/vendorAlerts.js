@@ -14,20 +14,29 @@
 // carry an arbitrary message.
 //
 // SAFETY: every channel is opt-in via VENDOR_ALERT_CHANNELS and off by default.
-// Nothing here fires until it is switched on deliberately, because the failure
-// mode is phoning real restaurants at 3am during a test run.
+// That switch is now the only thing standing between a test run and phoning a
+// real restaurant at 3am — the separate dry-run override was removed, so an
+// enabled channel always sends for real.
+const { blocked } = require("./liveSend");
+
 const TWILIO_API = "https://api.twilio.com/2010-04-01";
 
 const accountSid = () => process.env.TWILIO_ACCOUNT_SID;
 const authToken = () => process.env.TWILIO_AUTH_TOKEN;
 const whatsappFrom = () => process.env.TWILIO_WHATSAPP_FROM || "";
+const smsFrom = () => process.env.TWILIO_SMS_FROM || "";
 const voiceFrom = () => process.env.TWILIO_VOICE_FROM || "";
 
 /**
  * Which channels are live. Off by default — email and the panel bell already
  * cover the passive case, and these two cost money and ring real phones.
  *
- *   VENDOR_ALERT_CHANNELS=whatsapp,call
+ *   VENDOR_ALERT_CHANNELS=sms,whatsapp,call
+ *
+ * These are independent, not a fallback chain: enabling two sends two. That is
+ * deliberate for a vendor — the point is to be impossible to miss — but it does
+ * mean `sms,whatsapp` double-messages the same person, so pick one text channel
+ * unless you actually want both.
  */
 const enabledChannels = () =>
   new Set(
@@ -36,11 +45,6 @@ const enabledChannels = () =>
       .map((c) => c.trim().toLowerCase())
       .filter(Boolean)
   );
-
-// A last line of defence separate from the channel switches: when this is on,
-// everything is logged instead of sent, so a staging box pointed at production
-// credentials cannot ring anyone.
-const dryRun = () => process.env.VENDOR_ALERT_DRY_RUN === "true";
 
 const toE164 = (phone) => `+91${String(phone || "").replace(/\D/g, "").slice(-10)}`;
 
@@ -73,10 +77,10 @@ const guard = async (channel, phone, fn) => {
   if (!phone || String(phone).replace(/\D/g, "").length < 10) {
     return { sent: false, reason: "no usable phone number on file" };
   }
-  if (dryRun()) {
-    console.log(`MFB ~ vendor alert ~ DRY RUN ~ would ${channel} ${toE164(phone)}`);
-    return { sent: false, dryRun: true, reason: "VENDOR_ALERT_DRY_RUN" };
-  }
+  // Every vendor and admin channel funnels through here, so one check covers
+  // WhatsApp, SMS and the voice call.
+  const refused = blocked(phone, `vendor ${channel}`);
+  if (refused) return refused;
   try {
     return await fn();
   } catch (err) {
@@ -93,6 +97,65 @@ const guard = async (channel, phone, fn) => {
  * then silently not delivered. For testing, the Twilio WhatsApp sandbox works
  * once the vendor's number has joined it.
  */
+/**
+ * Rewrites a WhatsApp body for SMS.
+ *
+ * The alert text is authored for WhatsApp, and two of its habits are actively
+ * expensive over SMS:
+ *
+ *   *bold*  — WhatsApp markup. SMS has no formatting, so the asterisks are
+ *             delivered literally and the vendor reads "*New order #272403*".
+ *   emoji   — and the rupee sign. Neither is in GSM-7, and a single character
+ *   and ₹     outside that alphabet re-encodes the WHOLE message as UCS-2,
+ *             which cuts the segment size from 160 characters to 70. One
+ *             emoji can therefore double or triple what a message costs.
+ *
+ * So the SMS leg sends the same words, stripped to plain GSM-7 text.
+ */
+const forSms = (body) =>
+  String(body || "")
+    .replace(/\*/g, "")
+    .replace(/₹\s*/g, "Rs ")
+    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, "")
+    // Typography from our own copy that also sits outside GSM-7. One of these
+    // is enough to re-encode the whole message, and "2 items · Rs 250" was
+    // costing a second segment for a separator nobody would miss.
+    // Caller-supplied text (a vendor's name) is deliberately NOT touched: a
+    // name in Devanagari is worth the extra segment, a middle dot is not.
+    .replace(/[\u00B7\u2022]/g, "-")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+/**
+ * Plain SMS to the vendor.
+ *
+ * Exists because WhatsApp cannot be relied on here: a business-initiated
+ * free-form message outside the 24-hour window is refused (63016), and a vendor
+ * never messages first, so the window is never open. Until approved templates
+ * are in place SMS is the only text channel that actually arrives.
+ */
+async function smsVendor(phone, body) {
+  return guard("sms", phone, async () => {
+    if (!smsFrom()) {
+      return { sent: false, reason: "TWILIO_SMS_FROM not set" };
+    }
+    const { response, data } = await postForm(
+      `/Accounts/${accountSid()}/Messages.json`,
+      { From: smsFrom(), To: toE164(phone), Body: forSms(body) }
+    );
+    if (!response.ok) {
+      return { sent: false, reason: data?.message || `HTTP ${response.status}` };
+    }
+    return { sent: true, sid: data.sid, status: data.status };
+  });
+}
+
 async function whatsappVendor(phone, body) {
   return guard("whatsapp", phone, async () => {
     if (!whatsappFrom()) {
@@ -174,13 +237,25 @@ async function alertVendorNewOrder({
     : `Hello. You have a new order, number ${digits}, at ${shop}. ` +
       `Please open your dashboard to accept it and start preparing.`;
 
-  // Run both together — a slow voice API shouldn't delay the WhatsApp.
-  const [whatsapp, call] = await Promise.all([
+  // Run them together — a slow voice API shouldn't delay the text.
+  const [whatsapp, sms, call] = await Promise.all([
     whatsappVendor(phone, body),
+    smsVendor(phone, body),
     callVendor(phone, spoken),
   ]);
 
-  return { whatsapp, call };
+  return { whatsapp, sms, call };
+}
+
+/**
+ * Sends one escalation to every admin number on whichever text channels are
+ * enabled. Both escalations fan out identically, so they share this.
+ */
+async function alertPhones(targets, body) {
+  const results = await Promise.all(
+    targets.flatMap((phone) => [whatsappVendor(phone, body), smsVendor(phone, body)])
+  );
+  return { sent: results.some((r) => r.sent), recipients: targets.length, results };
 }
 
 let warnedNoAdminPhones = false;
@@ -250,13 +325,7 @@ async function alertAdminVendorUnresponsive({
     deadline +
     `\n\n${orderUrl}`;
 
-  const results = await Promise.all(targets.map((phone) => whatsappVendor(phone, body)));
-  return {
-    sent: results.some((r) => r.sent),
-    dryRun: results.every((r) => r.dryRun),
-    recipients: targets.length,
-    results,
-  };
+  return alertPhones(targets, body);
 }
 
 /** Tells admin staff an order was auto-cancelled. Never throws. */
@@ -277,8 +346,7 @@ async function alertAdminAutoCancelled({ orderId, shop, refunded, amount, orderU
     `❌ *Order #${orderId} auto-cancelled*\n` +
     `${shop} never accepted it.\n\n${money}\n\n${orderUrl}`;
 
-  const results = await Promise.all(targets.map((phone) => whatsappVendor(phone, body)));
-  return { sent: results.some((r) => r.sent), recipients: targets.length, results };
+  return alertPhones(targets, body);
 }
 
 module.exports = {
@@ -286,6 +354,8 @@ module.exports = {
   alertAdminVendorUnresponsive,
   alertAdminAutoCancelled,
   whatsappVendor,
+  smsVendor,
+  forSms,
   callVendor,
   enabledChannels,
   adminPhones,

@@ -9,7 +9,7 @@ const { User, Business, UserBank, Location } = require("../../models");
 // Map pins live on store_users but deliberately not on the User model — see
 // util/vendorColumns.js for why naming them there would break sign-in on any
 // database that has not run 2026-08-18-vendor-geo.sql.
-const { parsePin, writePin, readPin } = require("../../util/vendorColumns");
+const { parsePin, writePin } = require("../../util/vendorColumns");
 const {
   ADMIN_ROLES,
   VENDOR_ROLE,

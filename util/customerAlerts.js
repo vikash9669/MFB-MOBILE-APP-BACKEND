@@ -1,17 +1,19 @@
 // SMS / WhatsApp to the CUSTOMER, over Twilio.
 //
-// Separate from util/vendorAlerts.js on purpose. That module's switches
-// (VENDOR_ALERT_CHANNELS, VENDOR_ALERT_DRY_RUN) exist so someone can turn off
-// the noisy operational chatter aimed at restaurants — escalations, ring-backs
-// — without touching anything a paying customer receives. Sharing them would
-// mean muting vendor escalations also silently stops customers being told the
-// code that gets their food handed over.
+// Separate from util/vendorAlerts.js on purpose. That module's channel switch
+// (VENDOR_ALERT_CHANNELS) exists so someone can turn off the noisy operational
+// chatter aimed at restaurants — escalations, ring-backs — without touching
+// anything a paying customer receives. Sharing it would mean muting vendor
+// escalations also silently stops customers being told the code that gets their
+// food handed over.
 //
 // The one thing this is used for today is the delivery OTP. That code lived
 // only inside the customer app: right when the rider is at the door asking for
 // it, the customer may have the app closed, be on a different phone, or have a
 // flat battery — and there was no other way to get it. An undeliverable order
 // over a number nobody can read is a bad failure for something a text solves.
+const { blocked } = require("./liveSend");
+
 const TWILIO_API = "https://api.twilio.com/2010-04-01";
 
 const accountSid = () => process.env.TWILIO_ACCOUNT_SID;
@@ -69,9 +71,6 @@ const channels = () =>
     .split(",")
     .map((c) => c.trim().toLowerCase())
     .filter(Boolean);
-
-/** Logs instead of sending. Its own switch, so staging cannot text real customers. */
-const dryRun = () => process.env.CUSTOMER_ALERT_DRY_RUN === "true";
 
 const toE164 = (phone) => `+91${String(phone || "").replace(/\D/g, "").slice(-10)}`;
 
@@ -165,12 +164,10 @@ async function notify(phone, body, { contentSid, contentVariables } = {}) {
   if (!usable(phone)) {
     return { sent: false, reason: "no usable phone number on file" };
   }
-  if (dryRun()) {
-    // The number, never the message — the body carries the delivery code.
-    console.log(`MFB ~ customer alert ~ DRY RUN ~ would message ${toE164(phone)}`);
-    return { sent: false, dryRun: true, reason: "CUSTOMER_ALERT_DRY_RUN" };
-  }
-
+  // Ahead of the channel loop, so neither WhatsApp nor the SMS fallback can
+  // reach somebody the allowlist has not named.
+  const refused = blocked(phone, "customer message");
+  if (refused) return refused;
   const tried = [];
   for (const channel of enabled) {
     const from = channel === "whatsapp" ? whatsappFrom() : smsFrom();
@@ -247,16 +244,17 @@ async function notify(phone, body, { contentSid, contentVariables } = {}) {
 async function sendDeliveryOtp({ phone, orderId, otp, riderName }) {
   if (!otp) return { sent: false, reason: "no otp" };
 
-  // The three template variables, in the order the approved content declares
-  // them. The SMS body below says the same thing in one string — the two must
-  // stay in step, which is why they are built together rather than apart.
+  // WhatsApp gets one variable; SMS gets the whole sentence.
   //
-  // NOTE ON THE EVENTUAL TEMPLATE SHAPE. Meta routes anything that looks like a
-  // one-time code into its AUTHENTICATION category, whose body it owns: just the
-  // code plus a copy button, no custom wording. If the approved template ends up
-  // being that rather than a UTILITY one, this map becomes `{ 1: String(otp) }`
-  // and the order number and rider name survive only on the SMS leg. Both
-  // attempts at a UTILITY template were rejected — see the account note below.
+  // That asymmetry is Meta's, not ours. Anything resembling a one-time code is
+  // forced into the AUTHENTICATION category, whose body Meta owns outright —
+  // "{{1}} is your verification code", a mandatory copy button, and exactly one
+  // variable. There is no way to include the rider's name or the order number,
+  // which is why the two earlier UTILITY submissions were rejected and why a
+  // third would be too. See NOTIFICATION_TEMPLATES.md.
+  //
+  // So the rider name and order number survive on the SMS leg only. The code is
+  // the part that matters at the door; the rest is courtesy.
   const who = riderName || "Your delivery partner";
   const body =
     `${who} is on the way with order #${orderId}. ` +
@@ -265,7 +263,9 @@ async function sendDeliveryOtp({ phone, orderId, otp, riderName }) {
 
   return notify(phone, body, {
     contentSid: waTemplateSid(),
-    contentVariables: { 1: who, 2: String(orderId), 3: String(otp) },
+    // Exactly one, and it must be the code. Sending three to an authentication
+    // template fails the send outright rather than degrading.
+    contentVariables: { 1: String(otp) },
   });
 }
 

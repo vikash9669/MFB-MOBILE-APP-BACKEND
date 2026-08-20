@@ -63,7 +63,7 @@ exports.status = async (req, res) => {
     const offered = Number(offers.accepted || 0) + Number(offers.rejected || 0) + Number(offers.expired || 0);
 
     res.json({
-      engine: { enabled: cfg.enabled, dryRun: cfg.dryRun, tickMs: cfg.tickMs },
+      engine: { enabled: cfg.enabled, tickMs: cfg.tickMs },
       queue: {
         waiting: Number(queue.waiting || 0),
         searching: Number(queue.searching || 0),
@@ -130,7 +130,7 @@ exports.jobDetail = async (req, res) => {
   }
 };
 
-// GET /admin/dispatch/jobs/:id/candidates — dry-run the scorer, change nothing.
+// GET /admin/dispatch/jobs/:id/candidates — score the fleet, change nothing.
 //
 // This is the "why?" endpoint: it shows exactly who the engine would consider
 // right now and how each one scores, without offering anything to anybody.

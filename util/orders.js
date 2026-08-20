@@ -172,7 +172,11 @@ const createOrder = async ({
     delivery_charges: pricing.delivery_charges,
     order_status: 0,
     order_updated_by: user_id,
-    order_received_time: new Date().getTime() + 5.5 * 60 * 60 * 1000, // IST
+    // Plain server time. The IST conversion now happens in the driver — see the
+    // timezone note in util/database.js. The manual `+ 5.5h` that used to be
+    // here made the stored value agree with the legacy rows but disagree with
+    // the clock, so every countdown and "since" query inherited the error.
+    order_received_time: new Date(),
     ...payment,
   });
 

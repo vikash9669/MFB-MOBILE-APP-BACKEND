@@ -300,7 +300,9 @@ async function statusFor(intent) {
   return phonepe.fetchStatus(intent.merchant_txn_id);
 }
 
-async function checkCollection({ doId, dpId }) {
+// dpId is accepted so callers can pass the whole job object, but the lookup
+// is by doId alone — the partner is already implied by the collection row.
+async function checkCollection({ doId }) {
   if (!(await collectionReady())) return { state: "unavailable" };
 
   const rows = await sequelize.query(

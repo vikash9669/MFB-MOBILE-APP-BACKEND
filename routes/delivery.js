@@ -6,6 +6,7 @@ const express = require("express");
 
 const { verifyToken, requirePartner } = require("../middlewares/verifyToken");
 const { requireApproved } = require("../middlewares/deliveryGuards");
+const { deliveryCode } = require("../middlewares/rateLimit");
 const profile = require("../controllers/deliveryProfile");
 const onboarding = require("../controllers/deliveryOnboarding");
 const status = require("../controllers/deliveryStatus");
@@ -50,8 +51,13 @@ router.post("/orders/:id/reject", orders.reject);
 // money. The rider never marks it paid themselves.
 router.post("/orders/:id/collect", requireApproved, orders.startCollect);
 router.get("/orders/:id/collect", orders.collectStatus);
-router.post("/orders/:id/verify-pickup", orders.verifyPickup);
-router.post("/orders/:id/verify-delivery", orders.verifyDelivery);
+// Both check a code the rider is not supposed to know, so both are capped on
+// wrong answers — keyed on the partner, so one rider guessing never blocks
+// another rider's real delivery. The risk is not an outsider: it is a rider
+// brute-forcing the customer's door code to mark an order delivered without
+// handing the food over, which pays them and closes the job.
+router.post("/orders/:id/verify-pickup", deliveryCode, orders.verifyPickup);
+router.post("/orders/:id/verify-delivery", deliveryCode, orders.verifyDelivery);
 router.post("/orders/:id/report-issue", orders.reportIssue);
 
 // ── Earnings ───────────────────────────────────────────────────────

@@ -176,14 +176,6 @@ async function offerNext(job) {
 
   const best = candidates[0];
 
-  if (cfg.dryRun) {
-    await offers.logDispatch(job.do_id, "offer", {
-      dpId: best.rider.dpId,
-      detail: `DRY RUN would offer (score ${best.score})`,
-    });
-    return `#${job.do_id} dry-run → rider ${best.rider.dpId}`;
-  }
-
   const created = await offers.createOffer(job, best, round);
   if (!created.ok) return null;
 

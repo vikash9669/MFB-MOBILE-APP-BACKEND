@@ -8,7 +8,6 @@
 //
 // The session is closed at its last known breadcrumb rather than at now, so the
 // recorded time reflects when they were actually online, not when we noticed.
-const { Op } = require("sequelize");
 const { DeliveryPartner, DeliverySession, DeliverySessionPoint } = require("../models");
 
 const GRACE_MIN = Number(process.env.DELIVERY_OFFLINE_GRACE_MIN || 5);

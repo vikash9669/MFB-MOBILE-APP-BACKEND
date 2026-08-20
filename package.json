@@ -2,6 +2,9 @@
   "name": "mfb-mobile-app-backend",
   "version": "0.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
   "scripts": {
     "dev": "nodemon --env-file=.env app.js",
     "start": "node --env-file-if-exists=.env app.js",
@@ -9,7 +12,9 @@
     "migrate:delivery": "node --env-file=.env scripts/migrate-delivery.js",
     "seed:delivery": "node --env-file=.env scripts/seed-delivery.js",
     "lint": "eslint ./",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "schema:check": "node --env-file-if-exists=.env scripts/schema.js",
+    "schema:apply": "node --env-file-if-exists=.env scripts/schema.js --apply"
   },
   "dependencies": {
     "axios": "^1.12.2",

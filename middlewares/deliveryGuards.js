@@ -1,11 +1,18 @@
 // Guards specific to the delivery-partner APIs.
 const DeliveryPartner = require("../models/delivery_partner");
+const { adminKey } = require("./rateLimit");
 
 // requireAdmin — protects the admin review endpoints. A simple shared-secret
 // check (header `x-admin-key` must equal ADMIN_API_KEY). Good enough for the
 // internal/manual approval flow; swap for a real admin auth when a dashboard
 // exists. Fails closed if ADMIN_API_KEY isn't configured.
-exports.requireAdmin = (req, res, next) => {
+//
+// One shared secret, compared as a string, with no account behind it to lock
+// out — so guessing is only expensive if we make it expensive. The rate limiter
+// is bundled into the export rather than added at each mount point, because
+// this guard protects two routers (/delivery/admin/* and /notify/push) and a
+// third one added later would otherwise ship unlimited by default.
+const checkAdminKey = (req, res, next) => {
   const expected = process.env.ADMIN_API_KEY;
   if (!expected) {
     return res
@@ -18,6 +25,11 @@ exports.requireAdmin = (req, res, next) => {
   }
   next();
 };
+
+// Express flattens an array of handlers, so every existing
+// `router.use(requireAdmin)` and `router.post(..., requireAdmin, ...)` call site
+// picks up the limiter without changing.
+exports.requireAdmin = [adminKey, checkAdminKey];
 
 // requireApproved — defence-in-depth for operational endpoints (go online,
 // accept order). The app already hides these behind the onboarding gate, but

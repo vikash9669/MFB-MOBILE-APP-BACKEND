@@ -1,0 +1,70 @@
+# Render blueprint for the MFB backend.
+#
+# Secrets are deliberately NOT here — this file is committed. Every value marked
+# `sync: false` is set once in the Render dashboard and never leaves it.
+#
+# healthCheckPath uses /health (liveness), not /health/ready. Render restarts an
+# instance that fails its health check, and readiness reports 503 when the
+# database blips — which would turn a database hiccup into a restart loop of an
+# otherwise healthy process. Point uptime monitoring at /health/ready instead,
+# where a 503 raises an alert rather than pulling the trigger.
+services:
+  - type: web
+    name: mfb-backend
+    runtime: node
+    plan: starter          # free spins down after 15 min and blocks SMTP — see below
+    region: singapore      # closest Render region to India; keeps DB latency down
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render injects PORT; app.js reads it. Do not set it here.
+      - key: TRUST_PROXY
+        value: "1"          # exactly one proxy in front on Render
+
+      # ── must be set in the dashboard ──────────────────────────────
+      - { key: DB_HOST,                sync: false }
+      - { key: DB_PORT,                sync: false }
+      - { key: DB_NAME,                sync: false }
+      - { key: DB_USER_NAME,           sync: false }
+      - { key: DB_PASSWORD,            sync: false }
+      - { key: JWT_SECRET_KEY,         sync: false }   # openssl rand -hex 32
+      - { key: JWT_REFRESH_SECRET_KEY, sync: false }   # openssl rand -hex 32
+      - { key: ADMIN_API_KEY,          sync: false }   # openssl rand -hex 24
+      - { key: PANEL_URL,              sync: false }   # https://<panel host>
+      - { key: ADMIN_PANEL_ORIGINS,    sync: false }   # https://<panel host>
+      - { key: GOOGLE_MAPS_API_KEY,    sync: false }
+      - { key: TWILIO_ACCOUNT_SID,     sync: false }
+      - { key: TWILIO_AUTH_TOKEN,      sync: false }
+      - { key: TWILIO_VERIFY_SERVICE_SID, sync: false }
+      - { key: TWILIO_SMS_FROM,        sync: false }
+      - { key: TWILIO_WHATSAPP_FROM,   sync: false }
+      - { key: TWILIO_VOICE_FROM,      sync: false }
+      - { key: EMAIL_HOST,             sync: false }
+      - { key: EMAIL_USER,             sync: false }
+      - { key: EMAIL_PASS,             sync: false }
+      - { key: EMAIL_FROM,             sync: false }
+      - { key: ORDER_ALERT_EMAILS,     sync: false }
+      - { key: FCM_PROJECT_ID,         sync: false }
+      - { key: FCM_CLIENT_EMAIL,       sync: false }
+      - { key: FCM_PRIVATE_KEY,        sync: false }
+      - { key: PHONEPE_CLIENT_ID,      sync: false }
+      - { key: PHONEPE_CLIENT_SECRET,  sync: false }
+      - { key: PHONEPE_MERCHANT_ID,    sync: false }
+      - { key: PHONEPE_ENV,            sync: false }
+
+      # ── behaviour, safe to keep in the blueprint ──────────────────
+      # Render blocks outbound SMTP (25/465/587) on the free plan, and the
+      # HTTPS API is faster besides. SMTP stays wired for your own server.
+      - { key: EMAIL_TRANSPORT,        value: api }
+      - { key: MSGPROVIDER,            value: twilio }
+      - { key: CUSTOMER_ALERT_CHANNELS, value: sms }
+      - { key: VENDOR_ALERT_CHANNELS,  value: sms }
+      - { key: DEFAULT_CITY_PINCODE,   value: "452010" }
+      - { key: AUTO_MIGRATE,           value: "true" }
+      - { key: OTP_DEV_MODE,           value: "false" }
+      # Leave OTP_DEV_NUMBERS and LIVE_SEND_ALLOWLIST UNSET in production.
+      # The startup log names both if they are set.

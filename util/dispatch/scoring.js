@@ -13,7 +13,7 @@
 // Each score carries its parts, which are written to the offer row. When a
 // vendor asks why a distant rider got their order, the answer is on the record.
 const { config, isPeakHour } = require("./config");
-const { haversineKm, roadDistanceKm } = require("../geo");
+const { roadDistanceKm } = require("../geo");
 
 const clamp01 = (n) => Math.min(1, Math.max(0, n));
 

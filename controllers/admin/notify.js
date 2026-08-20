@@ -4,10 +4,8 @@
 // ("collect this order from the vendor") and the vendor ("make this order
 // ready"). Reproduced with the same recipients and the same message, using the
 // backend's existing nodemailer transport rather than a second SMTP config.
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const { transporter, mailFrom, mailConfigured } = require("../../util/email");
+const { sendMail, mailFrom, mailConfigured, recipientList } = require("../../util/email");
+const { blocked } = require("../../util/liveSend");
 const { StoreOrders, StoreOrderDetails, User, Business } = require("../../models");
 const {
   alertVendorNewOrder,
@@ -90,37 +88,32 @@ const shell = (orderId, greeting, body) => `<!DOCTYPE html>
 // Sends one mail, never throwing — a failed notification must not fail the
 // request that triggered it.
 //
-// MAIL_DRY_RUN writes the rendered message to a file instead of sending it, so
-// the whole notification flow can be exercised without SMTP credentials and
-// without mailing real vendors. Open the file in a browser to see exactly what
-// the recipient would get, buttons and all.
+// This always attempts a real send. There is no dry-run mode: mail either goes
+// out or the reason it did not is returned to the caller and logged.
 async function send(to, subject, html) {
   if (!to) return { sent: false, reason: "no address on file" };
 
-  if (process.env.MAIL_DRY_RUN === "true") {
-    const dir = path.join(os.tmpdir(), "mfb-mail");
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      const name = `${Date.now()}-${subject.replace(/[^a-z0-9]+/gi, "-").slice(0, 60)}.html`;
-      const file = path.join(dir, name);
-      fs.writeFileSync(file, `<!-- To: ${to} -->\n${html}`);
-      console.log(`MFB ~ mail DRY RUN ~ "${subject}" -> ${file}`);
-      return { sent: false, dryRun: true, file, reason: "MAIL_DRY_RUN" };
-    } catch (err) {
-      return { sent: false, dryRun: true, reason: err.message };
-    }
+  // Vendor, rider, customer and admin mail all pass through here.
+  //
+  // `to` may be several addresses joined with commas — admin alerts go to
+  // everyone in one message rather than one message each. So the allowlist is
+  // applied per address and the send continues to whoever survives, instead of
+  // hashing the joined string (which matches nobody and refused the lot).
+  const recipients = recipientList(to);
+  const allowed = recipients.filter((r) => !blocked(r, "email"));
+  if (allowed.length === 0) {
+    return { sent: false, blocked: true, reason: "recipient not in LIVE_SEND_ALLOWLIST" };
   }
 
-  // Host alone is not enough: this used to pass with a host and no credentials,
-  // so every send attempted an authentication it could not do and failed.
-  if (!mailConfigured()) return { sent: false, reason: "SMTP not configured" };
-  try {
-    await transporter.sendMail({ from: mailFrom(), to, subject, html });
-    return { sent: true };
-  } catch (err) {
-    console.log("MFB-error-logs ~ notify orderReceived ~ err:", err.message);
-    return { sent: false, reason: err.message };
+  // A transport alone is not enough: this used to pass with a host and no
+  // credentials, so every send attempted an authentication it could not do.
+  if (!mailConfigured()) return { sent: false, reason: "email not configured" };
+
+  const result = await sendMail({ to: allowed.join(", "), subject, html });
+  if (!result.sent) {
+    console.log("MFB-error-logs ~ notify send ~", result.reason);
   }
+  return result;
 }
 
 // Mails the rider and the vendor about one order. Callable directly, because
@@ -224,6 +217,7 @@ async function notifyOrderReceived(orderId) {
       email: vendorUser?.user_email ?? null,
       ...vendorResult,
       whatsapp: vendorAlerts.whatsapp,
+      sms: vendorAlerts.sms,
       call: vendorAlerts.call,
     },
     admins: { count: recipients.length, ...adminResult },

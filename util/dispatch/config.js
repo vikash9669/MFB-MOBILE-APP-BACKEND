@@ -150,7 +150,6 @@ const config = () => ({
   // Master switch. When false the engine schedules and logs but never offers,
   // which is how you watch it think before letting it act.
   enabled: bool(process.env.DISPATCH_ENABLED, true),
-  dryRun: bool(process.env.DISPATCH_DRY_RUN, false),
 
   // How often the engine ticks.
   tickMs: num(process.env.DISPATCH_TICK_MS, 5000),

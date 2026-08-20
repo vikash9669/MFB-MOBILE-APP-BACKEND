@@ -16,7 +16,7 @@ async function detect() {
   try {
     await sequelize.getQueryInterface().describeTable(TABLE);
     return true;
-  } catch (err) {
+  } catch {
     // describeTable throws for a missing table, which is the expected state
     // before the migration — say so once, quietly, rather than as an error.
     console.log(

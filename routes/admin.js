@@ -32,6 +32,15 @@ const menus = require("../controllers/admin/menus");
 const settings = require("../controllers/admin/settings");
 const deliveryAdmin = require("../controllers/deliveryAdmin");
 const panelShifts = require("../controllers/admin/shifts");
+const {
+  loginPerAccount,
+  loginPerIp,
+  passwordChange,
+  register: registerLimit,
+  otpSendPerPhone,
+  otpSendPerIp,
+  otpVerify,
+} = require("../middlewares/rateLimit");
 
 const router = express.Router();
 
@@ -46,13 +55,25 @@ const requireStore = (req, res, next) => {
 };
 
 // ── Public ─────────────────────────────────────────────────────────
-router.post("/auth/login", auth.login);
+//
+// Everything in this block is reachable without a token, and every entry is
+// rate limited: login and reset-password guard a secret, register and
+// forgot-password spend an SMS. See middlewares/rateLimit.js for the counting
+// rules — guards count failures only, spends count every call.
+//
+// Login is the sharpest of these because store_users holds plaintext
+// passwords, so a successful guess is the password itself, not a hash to crack.
+router.post("/auth/login", loginPerAccount, loginPerIp, auth.login);
 // Self-service signup and recovery (administration/Index::Register,
 // VerifyOTP, ForgotPassword, ResetPassword).
-router.post("/auth/register", register.register);
-router.post("/auth/verify-otp", register.verifyOtp);
-router.post("/auth/forgot-password", register.forgotPassword);
-router.post("/auth/reset-password", register.resetPassword);
+router.post("/auth/register", registerLimit, otpSendPerPhone, register.register);
+router.post("/auth/verify-otp", otpVerify, register.verifyOtp);
+// Replies identically whether or not the number exists, so the limiter must
+// count every call rather than failures — there are no failures to count.
+router.post("/auth/forgot-password", otpSendPerPhone, otpSendPerIp, register.forgotPassword);
+// The one that actually takes an account over: a correct 6-digit guess here
+// sets a new password. Same bucket as the other OTP checks for this phone.
+router.post("/auth/reset-password", otpVerify, register.resetPassword);
 
 // Address lookup for the map picker. Public because a vendor places their
 // kitchen on the map during signup, before an account exists. Rate limited per
@@ -65,7 +86,9 @@ router.use(verifyPanelToken);
 
 router.get("/auth/me", auth.me);
 router.post("/auth/logout", auth.logout);
-router.put("/auth/password", auth.changePassword);
+// Re-checks the current password, so it is a password oracle for a stolen
+// token. Keyed on the account rather than the IP.
+router.put("/auth/password", passwordChange, auth.changePassword);
 
 // ── Vendor / rider portals ─────────────────────────────────────────
 // Scoping comes from the token inside each handler, so a vendor can only ever
