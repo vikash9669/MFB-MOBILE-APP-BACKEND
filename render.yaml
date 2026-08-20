@@ -65,5 +65,5 @@ services:
       - { key: VENDOR_ALERT_CHANNELS,  value: sms }
       - { key: AUTO_MIGRATE,           value: "true" }
       - { key: OTP_DEV_MODE,           value: "false" }
-      # Leave OTP_DEV_NUMBERS and LIVE_SEND_ALLOWLIST UNSET in production.
-      # The startup log names both if they are set.
+      # Leave OTP_DEV_NUMBERS UNSET in production.
+      # The startup log names it if it is set.

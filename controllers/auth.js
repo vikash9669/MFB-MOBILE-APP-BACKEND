@@ -57,7 +57,7 @@ exports.getOtp = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ exports.getOtp= ~ err:", err);
-    res.status(500).json({ message: "Otp sending failed", err });
+    res.status(500).json({ message: "Otp sending failed" });
   }
 };
 
@@ -148,6 +148,6 @@ exports.verifyOtp = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ exports.verifyOtp= ~ err:", err);
-    res.status(500).json({ message: "Otp verification failed", err });
+    res.status(500).json({ message: "Otp verification failed" });
   }
 };

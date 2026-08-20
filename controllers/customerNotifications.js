@@ -35,7 +35,7 @@ exports.list = async (req, res) => {
     res.json({ unread, notifications: items.map(serializeNotif) });
   } catch (err) {
     console.log("MFB-error-logs ~ customer notifications list ~ err:", err);
-    res.status(500).json({ message: "Failed to load notifications", err });
+    res.status(500).json({ message: "Failed to load notifications" });
   }
 };
 
@@ -48,7 +48,7 @@ exports.unreadCount = async (req, res) => {
     res.json({ unread });
   } catch (err) {
     console.log("MFB-error-logs ~ customer unreadCount ~ err:", err);
-    res.status(500).json({ message: "Failed to load unread count", err });
+    res.status(500).json({ message: "Failed to load unread count" });
   }
 };
 
@@ -62,7 +62,7 @@ exports.markAllRead = async (req, res) => {
     res.json({ message: "All notifications marked read" });
   } catch (err) {
     console.log("MFB-error-logs ~ customer markAllRead ~ err:", err);
-    res.status(500).json({ message: "Failed to update notifications", err });
+    res.status(500).json({ message: "Failed to update notifications" });
   }
 };
 
@@ -76,7 +76,7 @@ exports.markRead = async (req, res) => {
     res.json({ message: "Notification marked read" });
   } catch (err) {
     console.log("MFB-error-logs ~ customer markRead ~ err:", err);
-    res.status(500).json({ message: "Failed to update notification", err });
+    res.status(500).json({ message: "Failed to update notification" });
   }
 };
 
@@ -108,7 +108,7 @@ exports.registerDevice = async (req, res) => {
     res.json({ message: "Device registered" });
   } catch (err) {
     console.log("MFB-error-logs ~ customer device register ~ err:", err);
-    res.status(500).json({ message: "Failed to register device", err });
+    res.status(500).json({ message: "Failed to register device" });
   }
 };
 
@@ -123,7 +123,7 @@ exports.unregisterDevice = async (req, res) => {
     res.json({ message: "Device unregistered" });
   } catch (err) {
     console.log("MFB-error-logs ~ customer device unregister ~ err:", err);
-    res.status(500).json({ message: "Failed to unregister device", err });
+    res.status(500).json({ message: "Failed to unregister device" });
   }
 };
 
@@ -146,6 +146,6 @@ exports.adminPush = async (req, res) => {
     res.json({ message: "Pushed", notif_id: notif.notif_id });
   } catch (err) {
     console.log("MFB-error-logs ~ customer adminPush ~ err:", err);
-    res.status(500).json({ message: "Failed to push notification", err });
+    res.status(500).json({ message: "Failed to push notification" });
   }
 };

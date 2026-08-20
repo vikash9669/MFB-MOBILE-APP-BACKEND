@@ -32,7 +32,7 @@ exports.list = async (req, res) => {
     res.json({ unread, notifications: items.map(serializeNotif) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery notifications list ~ err:", err);
-    res.status(500).json({ message: "Failed to load notifications", err });
+    res.status(500).json({ message: "Failed to load notifications" });
   }
 };
 
@@ -45,7 +45,7 @@ exports.unreadCount = async (req, res) => {
     res.json({ unread });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery unreadCount ~ err:", err);
-    res.status(500).json({ message: "Failed to load unread count", err });
+    res.status(500).json({ message: "Failed to load unread count" });
   }
 };
 
@@ -59,7 +59,7 @@ exports.markAllRead = async (req, res) => {
     res.json({ message: "All notifications marked read" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery markAllRead ~ err:", err);
-    res.status(500).json({ message: "Failed to update notifications", err });
+    res.status(500).json({ message: "Failed to update notifications" });
   }
 };
 
@@ -73,6 +73,6 @@ exports.markRead = async (req, res) => {
     res.json({ message: "Notification marked read" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery markRead ~ err:", err);
-    res.status(500).json({ message: "Failed to update notification", err });
+    res.status(500).json({ message: "Failed to update notification" });
   }
 };

@@ -64,22 +64,42 @@ const sendOtp = async (phoneNumber, channel) => {
   return data;
 };
 
+// Indian mobile numbers, which is what the partner app collects.
+const isPhone = (v) => /^[0-9]{10}$/.test(String(v ?? "").trim());
+
 exports.getOtp = async (req, res) => {
+  // Validate before calling the provider. An absent phone_number used to reach
+  // initiateOtp as undefined, throw somewhere inside it, and come back as a 500
+  // — so a plainly malformed request looked to the app like the server was
+  // broken, and to us like an outage worth investigating.
+  const { phone_number, channel } = req.body || {};
+  if (!isPhone(phone_number)) {
+    return res.status(400).json({ message: "A 10-digit phone number is required" });
+  }
+
   try {
-    const { phone_number, channel } = req.body;
-    await sendOtp(phone_number, channel);
+    await sendOtp(String(phone_number).trim(), channel);
     res.json({ message: "OTP sent successfully" });
   } catch (err) {
+    // Log the error, do not return it. This used to serialise `err` into the
+    // response, handing the caller whatever the SMS provider said back —
+    // account identifiers, request ids and message templates included.
     console.log("MFB-error-logs ~ delivery getOtp ~ err:", err);
-    res.status(500).json({ message: "Otp sending failed", err });
+    res.status(500).json({ message: "Otp sending failed" });
   }
 };
 
 exports.verifyOtp = async (req, res) => {
   try {
-    const { phone_number, user_otp } = req.body;
+    const { phone_number, user_otp } = req.body || {};
+    // Sequelize throws on an undefined value in a WHERE clause, which turned a
+    // missing field into a 500 rather than the 400 it is.
+    if (!isPhone(phone_number) || !String(user_otp ?? "").trim()) {
+      return res.status(400).json({ message: "Phone number and OTP are required" });
+    }
+
     const partner = await DeliveryPartner.findOne({
-      where: { dp_phone: phone_number },
+      where: { dp_phone: String(phone_number).trim() },
     });
 
     if (partner == null || !partner.dp_request_id) {
@@ -102,7 +122,7 @@ exports.verifyOtp = async (req, res) => {
     res.json({ message: "OTP verified successfully", ...issueTokens(partner) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery verifyOtp ~ err:", err);
-    res.status(500).json({ message: "Otp verification failed", err });
+    res.status(500).json({ message: "Otp verification failed" });
   }
 };
 
@@ -137,7 +157,7 @@ exports.refresh = async (req, res) => {
     res.json({ message: "Token refreshed", ...issueTokens(partner) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery refresh ~ err:", err);
-    res.status(500).json({ message: "Token refresh failed", err });
+    res.status(500).json({ message: "Token refresh failed" });
   }
 };
 
@@ -150,7 +170,7 @@ exports.logout = async (req, res) => {
     res.json({ message: "Logged out" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery logout ~ err:", err);
-    res.status(500).json({ message: "Logout failed", err });
+    res.status(500).json({ message: "Logout failed" });
   }
 };
 
@@ -177,6 +197,6 @@ exports.updateSettings = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery updateSettings ~ err:", err);
-    res.status(500).json({ message: "Settings update failed", err });
+    res.status(500).json({ message: "Settings update failed" });
   }
 };

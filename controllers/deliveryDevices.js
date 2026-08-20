@@ -30,7 +30,7 @@ exports.register = async (req, res) => {
     res.json({ message: "Device registered" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery device register ~ err:", err);
-    res.status(500).json({ message: "Failed to register device", err });
+    res.status(500).json({ message: "Failed to register device" });
   }
 };
 
@@ -45,6 +45,6 @@ exports.unregister = async (req, res) => {
     res.json({ message: "Device unregistered" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery device unregister ~ err:", err);
-    res.status(500).json({ message: "Failed to unregister device", err });
+    res.status(500).json({ message: "Failed to unregister device" });
   }
 };

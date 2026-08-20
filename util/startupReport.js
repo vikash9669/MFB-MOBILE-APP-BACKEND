@@ -78,9 +78,6 @@ function warnings() {
   if (devNums.length) {
     w.push(`OTP_DEV_NUMBERS — ${devNums.length} number(s) skip OTP entirely and accept OTP_DEV_CODE.`);
   }
-  if (set(process.env.LIVE_SEND_ALLOWLIST) && process.env.LIVE_SEND_ALLOWLIST.trim() !== "*") {
-    w.push("LIVE_SEND_ALLOWLIST is set — only listed recipients receive SMS/WhatsApp/calls/email.");
-  }
   if ((process.env.PHONEPE_ENV || "UAT").toUpperCase() !== "PROD") {
     w.push("PHONEPE_ENV is not PROD — payments use test money.");
   }

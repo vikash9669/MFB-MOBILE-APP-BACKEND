@@ -113,7 +113,7 @@ exports.getSummary = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getSummary ~ err:", err);
-    res.status(500).json({ message: "Failed to load home summary", err });
+    res.status(500).json({ message: "Failed to load home summary" });
   }
 };
 
@@ -167,7 +167,7 @@ exports.setOnline = async (req, res) => {
     res.json({ message: online ? "You're online" : "You're offline", online });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery setOnline ~ err:", err);
-    res.status(500).json({ message: "Failed to update status", err });
+    res.status(500).json({ message: "Failed to update status" });
   }
 };
 
@@ -195,6 +195,6 @@ exports.updateLocation = async (req, res) => {
     res.json({ message: "Location updated" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery updateLocation ~ err:", err);
-    res.status(500).json({ message: "Failed to update location", err });
+    res.status(500).json({ message: "Failed to update location" });
   }
 };

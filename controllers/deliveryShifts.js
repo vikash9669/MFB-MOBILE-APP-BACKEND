@@ -119,7 +119,7 @@ exports.getShifts = async (req, res) => {
     res.json(await shiftOverview(req.user.dp_id));
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getShifts ~ err:", err);
-    res.status(500).json({ message: "Failed to load shifts", err });
+    res.status(500).json({ message: "Failed to load shifts" });
   }
 };
 
@@ -167,7 +167,7 @@ exports.create = async (req, res) => {
     res.status(201).json({ message: "Shift added", shift: serializeShift(shift) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery create shift ~ err:", err);
-    res.status(500).json({ message: "Failed to add shift", err });
+    res.status(500).json({ message: "Failed to add shift" });
   }
 };
 
@@ -185,7 +185,7 @@ exports.remove = async (req, res) => {
     res.json({ message: "Shift removed" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery remove shift ~ err:", err);
-    res.status(500).json({ message: "Failed to remove shift", err });
+    res.status(500).json({ message: "Failed to remove shift" });
   }
 };
 
@@ -199,7 +199,7 @@ exports.detail = async (req, res) => {
     res.json(await shiftDetail(shift));
   } catch (err) {
     console.log("MFB-error-logs ~ delivery shift detail ~ err:", err);
-    res.status(500).json({ message: "Failed to load shift", err });
+    res.status(500).json({ message: "Failed to load shift" });
   }
 };
 
@@ -241,7 +241,7 @@ exports.book = async (req, res) => {
     res.json({ message: "Shift booked", shift: serializeShift(shift) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery book shift ~ err:", err);
-    res.status(500).json({ message: "Failed to book shift", err });
+    res.status(500).json({ message: "Failed to book shift" });
   }
 };
 
@@ -263,6 +263,6 @@ exports.extend = async (req, res) => {
     res.json({ message: `Shift extended by ${minutes} min`, shift: serializeShift(shift) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery extend shift ~ err:", err);
-    res.status(500).json({ message: "Failed to extend shift", err });
+    res.status(500).json({ message: "Failed to extend shift" });
   }
 };

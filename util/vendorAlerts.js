@@ -17,7 +17,6 @@
 // That switch is now the only thing standing between a test run and phoning a
 // real restaurant at 3am — the separate dry-run override was removed, so an
 // enabled channel always sends for real.
-const { blocked } = require("./liveSend");
 
 const TWILIO_API = "https://api.twilio.com/2010-04-01";
 
@@ -77,10 +76,6 @@ const guard = async (channel, phone, fn) => {
   if (!phone || String(phone).replace(/\D/g, "").length < 10) {
     return { sent: false, reason: "no usable phone number on file" };
   }
-  // Every vendor and admin channel funnels through here, so one check covers
-  // WhatsApp, SMS and the voice call.
-  const refused = blocked(phone, `vendor ${channel}`);
-  if (refused) return refused;
   try {
     return await fn();
   } catch (err) {

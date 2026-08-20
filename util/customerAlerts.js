@@ -12,7 +12,6 @@
 // it, the customer may have the app closed, be on a different phone, or have a
 // flat battery — and there was no other way to get it. An undeliverable order
 // over a number nobody can read is a bad failure for something a text solves.
-const { blocked } = require("./liveSend");
 
 const TWILIO_API = "https://api.twilio.com/2010-04-01";
 
@@ -164,10 +163,6 @@ async function notify(phone, body, { contentSid, contentVariables } = {}) {
   if (!usable(phone)) {
     return { sent: false, reason: "no usable phone number on file" };
   }
-  // Ahead of the channel loop, so neither WhatsApp nor the SMS fallback can
-  // reach somebody the allowlist has not named.
-  const refused = blocked(phone, "customer message");
-  if (refused) return refused;
   const tried = [];
   for (const channel of enabled) {
     const from = channel === "whatsapp" ? whatsappFrom() : smsFrom();

@@ -187,7 +187,7 @@ exports.getIncoming = async (req, res) => {
     res.json({ order: serializeOrder(best.order) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getIncoming ~ err:", err);
-    res.status(500).json({ message: "Failed to load incoming order", err });
+    res.status(500).json({ message: "Failed to load incoming order" });
   }
 };
 
@@ -198,7 +198,7 @@ exports.getActive = async (req, res) => {
     res.json({ order: active ? serializeOrder(active) : null });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getActive ~ err:", err);
-    res.status(500).json({ message: "Failed to load active order", err });
+    res.status(500).json({ message: "Failed to load active order" });
   }
 };
 
@@ -223,7 +223,7 @@ exports.getOne = async (req, res) => {
     res.json({ order: serializeOrder(order) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getOne ~ err:", err);
-    res.status(500).json({ message: "Failed to load order", err });
+    res.status(500).json({ message: "Failed to load order" });
   }
 };
 
@@ -308,7 +308,7 @@ exports.accept = async (req, res) => {
     res.json({ message: "Order accepted", order: serializeOrder(order) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery accept ~ err:", err);
-    res.status(500).json({ message: "Failed to accept order", err });
+    res.status(500).json({ message: "Failed to accept order" });
   }
 };
 
@@ -401,7 +401,7 @@ exports.reject = async (req, res) => {
     res.json({ message: "Order rejected" });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery reject ~ err:", err);
-    res.status(500).json({ message: "Failed to reject order", err });
+    res.status(500).json({ message: "Failed to reject order" });
   }
 };
 
@@ -518,7 +518,7 @@ exports.verifyPickup = async (req, res) => {
     res.json({ message: "Pickup confirmed", order: serializeOrder(order) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery verifyPickup ~ err:", err);
-    res.status(500).json({ message: "Failed to confirm pickup", err });
+    res.status(500).json({ message: "Failed to confirm pickup" });
   }
 };
 
@@ -620,7 +620,7 @@ exports.verifyDelivery = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery verifyDelivery ~ err:", err);
-    res.status(500).json({ message: "Failed to confirm delivery", err });
+    res.status(500).json({ message: "Failed to confirm delivery" });
   }
 };
 
@@ -649,7 +649,7 @@ exports.reportIssue = async (req, res) => {
     res.json({ message: "Issue reported. Support will contact you shortly." });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery reportIssue ~ err:", err);
-    res.status(500).json({ message: "Failed to report issue", err });
+    res.status(500).json({ message: "Failed to report issue" });
   }
 };
 
@@ -665,6 +665,6 @@ exports.getHistory = async (req, res) => {
     res.json({ orders: orders.map(serializeOrder) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getHistory ~ err:", err);
-    res.status(500).json({ message: "Failed to load history", err });
+    res.status(500).json({ message: "Failed to load history" });
   }
 };

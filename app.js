@@ -20,7 +20,6 @@ const adminPanelRoutes = require("./routes/admin");
 const internalNotifyRoutes = require("./routes/internalNotify");
 const paymentRoutes = require("./routes/payment");
 const healthRoutes = require("./routes/health");
-const liveSend = require("./util/liveSend");
 const { ensureSchema, pending } = require("./util/schema");
 const { reportBoot, reportListening, reportFatal } = require("./util/startupReport");
 const { requestLog } = require("./middlewares/requestLog");
@@ -132,17 +131,6 @@ sequelize
     // Scores riders and offers accepted orders to them one at a time. Dormant
     // until migrations/2026-08-09-dispatch-engine.sql has run.
     startDispatchEngine();
-    // Say so at boot, not on the first refused message. With the allowlist set,
-    // real customers receive nothing — that is correct on a laptop pointed at a
-    // clone of production and catastrophic on the real thing, so it needs to be
-    // visible in the startup log rather than discovered from a support call.
-    if (!liveSend.unrestricted()) {
-      console.log(
-        "MFB ~ ⚠️  LIVE_SEND_ALLOWLIST is set — only listed recipients will receive " +
-          "SMS, WhatsApp, calls or email. Clear it in production."
-      );
-    }
-
     // 8080 stays the default so nothing that hardcodes it breaks; PORT exists so
     // a second instance can be run alongside for testing.
     const port = Number(process.env.PORT) || 8080;

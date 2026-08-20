@@ -11,7 +11,7 @@ exports.getMe = async (req, res) => {
     res.json({ partner: serializePartner(partner) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getMe ~ err:", err);
-    res.status(500).json({ message: "Failed to load profile", err });
+    res.status(500).json({ message: "Failed to load profile" });
   }
 };
 
@@ -49,6 +49,6 @@ exports.updateMe = async (req, res) => {
     res.json({ message: "Profile updated", partner: serializePartner(partner) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery updateMe ~ err:", err);
-    res.status(500).json({ message: "Failed to update profile", err });
+    res.status(500).json({ message: "Failed to update profile" });
   }
 };

@@ -92,6 +92,6 @@ exports.getEarnings = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getEarnings ~ err:", err);
-    res.status(500).json({ message: "Failed to load earnings", err });
+    res.status(500).json({ message: "Failed to load earnings" });
   }
 };

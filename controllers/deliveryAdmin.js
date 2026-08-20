@@ -52,7 +52,7 @@ exports.listPartners = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ admin listPartners ~ err:", err);
-    res.status(500).json({ message: "Failed to list partners", err });
+    res.status(500).json({ message: "Failed to list partners" });
   }
 };
 
@@ -84,7 +84,7 @@ exports.getPartner = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ admin getPartner ~ err:", err);
-    res.status(500).json({ message: "Failed to load partner", err });
+    res.status(500).json({ message: "Failed to load partner" });
   }
 };
 
@@ -177,7 +177,7 @@ exports.verify = async (req, res) => {
     res.json({ message: "Partner updated", verification_status: status });
   } catch (err) {
     console.log("MFB-error-logs ~ admin verify ~ err:", err);
-    res.status(500).json({ message: "Failed to update partner", err });
+    res.status(500).json({ message: "Failed to update partner" });
   }
 };
 

@@ -5,7 +5,6 @@
 // ready"). Reproduced with the same recipients and the same message, using the
 // backend's existing nodemailer transport rather than a second SMTP config.
 const { sendMail, mailFrom, mailConfigured, recipientList } = require("../../util/email");
-const { blocked } = require("../../util/liveSend");
 const { StoreOrders, StoreOrderDetails, User, Business } = require("../../models");
 const {
   alertVendorNewOrder,
@@ -102,20 +101,17 @@ async function send(to, subject, html) {
   // Vendor, rider, customer and admin mail all pass through here.
   //
   // `to` may be several addresses joined with commas — admin alerts go to
-  // everyone in one message rather than one message each. So the allowlist is
-  // applied per address and the send continues to whoever survives, instead of
-  // hashing the joined string (which matches nobody and refused the lot).
+  // everyone in one message rather than one message each.
   const recipients = recipientList(to);
-  const allowed = recipients.filter((r) => !blocked(r, "email"));
-  if (allowed.length === 0) {
-    return { sent: false, blocked: true, reason: "recipient not in LIVE_SEND_ALLOWLIST" };
+  if (recipients.length === 0) {
+    return { sent: false, reason: "no recipient address" };
   }
 
   // A transport alone is not enough: this used to pass with a host and no
   // credentials, so every send attempted an authentication it could not do.
   if (!mailConfigured()) return { sent: false, reason: "email not configured" };
 
-  const result = await sendMail({ to: allowed.join(", "), subject, html });
+  const result = await sendMail({ to: recipients.join(", "), subject, html });
   if (!result.sent) {
     console.log("MFB-error-logs ~ notify send ~", result.reason);
   }

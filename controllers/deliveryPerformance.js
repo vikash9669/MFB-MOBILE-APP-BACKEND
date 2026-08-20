@@ -46,6 +46,6 @@ exports.getPerformance = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getPerformance ~ err:", err);
-    res.status(500).json({ message: "Failed to load performance", err });
+    res.status(500).json({ message: "Failed to load performance" });
   }
 };

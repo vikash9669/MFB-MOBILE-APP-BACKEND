@@ -114,7 +114,7 @@ exports.getStatus = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery onboarding status ~ err:", err);
-    res.status(500).json({ message: "Failed to load onboarding status", err });
+    res.status(500).json({ message: "Failed to load onboarding status" });
   }
 };
 
@@ -157,7 +157,7 @@ exports.submit = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery onboarding submit ~ err:", err);
-    res.status(500).json({ message: "Failed to submit application", err });
+    res.status(500).json({ message: "Failed to submit application" });
   }
 };
 

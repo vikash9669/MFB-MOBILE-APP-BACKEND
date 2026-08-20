@@ -32,7 +32,7 @@ exports.getWallet = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getWallet ~ err:", err);
-    res.status(500).json({ message: "Failed to load wallet", err });
+    res.status(500).json({ message: "Failed to load wallet" });
   }
 };
 
@@ -82,6 +82,6 @@ exports.withdraw = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery withdraw ~ err:", err);
-    res.status(500).json({ message: "Failed to process withdrawal", err });
+    res.status(500).json({ message: "Failed to process withdrawal" });
   }
 };

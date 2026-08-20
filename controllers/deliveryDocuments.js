@@ -29,7 +29,7 @@ exports.getDocuments = async (req, res) => {
     });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery getDocuments ~ err:", err);
-    res.status(500).json({ message: "Failed to load documents", err });
+    res.status(500).json({ message: "Failed to load documents" });
   }
 };
 
@@ -75,7 +75,7 @@ exports.upsert = async (req, res) => {
     res.json({ message: "Document uploaded", document: serializeDoc(doc) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery upsert doc ~ err:", err);
-    res.status(500).json({ message: "Failed to upload document", err });
+    res.status(500).json({ message: "Failed to upload document" });
   }
 };
 
@@ -96,6 +96,6 @@ exports.reupload = async (req, res) => {
     res.json({ message: "Document submitted for review", document: serializeDoc(doc) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery reupload ~ err:", err);
-    res.status(500).json({ message: "Failed to submit document", err });
+    res.status(500).json({ message: "Failed to submit document" });
   }
 };
