@@ -76,7 +76,10 @@ exports.updateUser = async (req, res) => {
     const updatedUser = await User.findByPk(user_id);
     res.status(200).json({ user: updatedUser });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    // Logged, not returned: this used to send error.message straight to the
+    // client, which for a Sequelize failure includes the SQL and column names.
+    console.log("MFB-error-logs ~ update profile ~ err:", error);
+    res.status(500).json({ message: "Something went wrong" });
   }
 };
 

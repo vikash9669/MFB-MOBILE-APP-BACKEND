@@ -142,7 +142,7 @@ const initiatePayment = async (req, res) => {
     console.error("MFB-error-logs ~ initiatePayment:", error);
     res
       .status(500)
-      .json({ message: "Could not start payment", error: error.message });
+      .json({ message: "Could not start payment" });
   }
 };
 
@@ -151,7 +151,14 @@ const initiatePayment = async (req, res) => {
 // hint only — PhonePe's status API is the authority.
 const confirmPayment = async (req, res) => {
   const { user_id } = req.user;
-  const { merchant_txn_id } = req.body;
+  const { merchant_txn_id } = req.body || {};
+
+  // Sequelize throws on an undefined value in a WHERE clause, so a request
+  // missing this field came back as a 500 carrying the raw driver message
+  // rather than the 400 it plainly is.
+  if (!merchant_txn_id) {
+    return res.status(400).json({ message: "merchant_txn_id is required" });
+  }
 
   try {
     const intent = await PaymentIntent.findOne({
@@ -193,7 +200,7 @@ const confirmPayment = async (req, res) => {
     console.error("MFB-error-logs ~ confirmPayment:", error);
     res
       .status(500)
-      .json({ message: "Could not confirm payment", error: error.message });
+      .json({ message: "Could not confirm payment" });
   }
 };
 

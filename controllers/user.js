@@ -2,7 +2,8 @@ const getUser = async (req, res) => {
   try {
     res.json(req.user);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.log("MFB-error-logs ~ profile ~ err:", error);
+    res.status(400).json({ message: "Could not load your profile" });
   }
 };
 

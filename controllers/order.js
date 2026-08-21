@@ -452,7 +452,15 @@ const createOrder = async (req, res) => {
     business_user_id,
     coupon_code,
     platform,
-  } = req.body;
+  } = req.body || {};
+
+  // priceCart destructures the cart, so an absent one failed deep inside with
+  // "Cannot convert undefined or null to object" and surfaced as a 500.
+  if (!address_id || !business_user_id || !Array.isArray(product_ids_with_quantity)) {
+    return res.status(400).json({
+      message: "address_id, business_user_id and product_ids_with_quantity are required",
+    });
+  }
 
   try {
     const pricing = await priceCart({
@@ -489,7 +497,7 @@ const createOrder = async (req, res) => {
     console.error(error);
     res
       .status(500)
-      .json({ message: "Error creating order", error: error.message });
+      .json({ message: "Error creating order" });
   }
 };
 

@@ -22,7 +22,8 @@ const getBannersList = async (req, res) => {
     });
     res.json(banners);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.log("MFB-error-logs ~ banners ~ err:", error);
+    res.status(400).json({ message: "Could not load banners" });
   }
 };
 
