@@ -76,6 +76,33 @@ test("each column entry's SQL targets the table it claims", () => {
 test("the definitions are not empty", () => {
   // A regeneration that silently produced nothing would make the runner a no-op
   // and every deploy would look fine while creating nothing.
-  assert.ok(TABLES.length >= 18, `only ${TABLES.length} tables defined`);
+  //
+  // 17, not 18: store_delivery_partners was folded into store_users, so the
+  // partner fields are now COLUMNS entries rather than a table of their own.
+  assert.ok(TABLES.length >= 17, `only ${TABLES.length} tables defined`);
   assert.ok(COLUMNS.length >= 14, `only ${COLUMNS.length} columns defined`);
+});
+
+// The unification is only real if the partner fields land on store_users and
+// nothing recreates the old table. ensureSchema runs on every boot, so a
+// leftover definition would rebuild what the migration just dropped.
+test("delivery partners are columns on store_users, not a table", () => {
+  assert.ok(
+    !TABLES.some((t) => t.name === "store_delivery_partners"),
+    "store_delivery_partners is still defined — boot would recreate it"
+  );
+  const dp = COLUMNS.filter((c) => c.column.startsWith("dp_"));
+  assert.ok(dp.length >= 26, `only ${dp.length} dp_ columns defined`);
+  for (const c of dp) {
+    assert.strictEqual(c.table, "store_users", `${c.column} targets ${c.table}`);
+  }
+});
+
+test("no definition still references the retired partner table", () => {
+  for (const t of TABLES) {
+    assert.ok(
+      !/REFERENCES\s+`store_delivery_partners`/.test(t.ddl),
+      `${t.name} still has a foreign key to store_delivery_partners`
+    );
+  }
 });

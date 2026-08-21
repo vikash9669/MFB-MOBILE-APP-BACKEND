@@ -7,45 +7,16 @@
 -- Apply:  mysql -h HOST -u USER -p DATABASE < 2026-08-07-app-tables.sql
 
 SET FOREIGN_KEY_CHECKS=0;
-
--- ------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `store_delivery_partners` (
-  `dp_id` int NOT NULL AUTO_INCREMENT,
-  `dp_name` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `dp_email` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `dp_phone` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `dp_code` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `dp_request_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_token_version` int NOT NULL DEFAULT '1',
-  `dp_settings` json DEFAULT NULL,
-  `dp_vehicle_type` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Bike',
-  `dp_vehicle_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_photo` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  `dp_verification_status` enum('pending','under_review','approved','rejected') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
-  `dp_rejection_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_submitted_at` datetime DEFAULT NULL,
-  `dp_reviewed_at` datetime DEFAULT NULL,
-  `dp_bank_account` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_bank_ifsc` varchar(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_bank_holder` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_upi_id` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `dp_online` tinyint(1) NOT NULL DEFAULT '0',
-  `dp_lat` decimal(10,7) DEFAULT NULL,
-  `dp_lng` decimal(10,7) DEFAULT NULL,
-  `dp_wallet_balance` decimal(10,2) NOT NULL DEFAULT '0.00',
-  `dp_cash_in_hand` decimal(10,2) NOT NULL DEFAULT '0.00',
-  `dp_rating` decimal(3,2) NOT NULL DEFAULT '5.00',
-  `dp_total_deliveries` int NOT NULL DEFAULT '0',
-  `dp_on_time_pct` int NOT NULL DEFAULT '100',
-  `dp_acceptance_pct` int NOT NULL DEFAULT '100',
-  `dp_completion_pct` int NOT NULL DEFAULT '100',
-  `dp_cancellation_pct` decimal(4,1) NOT NULL DEFAULT '0.0',
-  `dp_avg_delivery_min` int NOT NULL DEFAULT '0',
-  `dp_active` tinyint(1) NOT NULL DEFAULT '1',
-  `dp_registered` datetime NOT NULL,
-  `dp_last_login` datetime DEFAULT NULL,
-  PRIMARY KEY (`dp_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+-- store_delivery_partners is deliberately NOT created here.
+--
+-- A delivery partner is a store_users row with user_role = 3; the partner
+-- fields live on store_users. This file used to create a separate table, which
+-- meant a fresh install built it only for
+-- 2026-08-21-unify-delivery-partners-into-store-users.sql to rename it away
+-- moments later — and, worse, gave the phone-number join between the two
+-- tables a chance to mis-link a customer to an application.
+--
+-- The child tables below reference store_users(user_id) directly.
 
 -- ------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `store_delivery_documents` (
@@ -59,7 +30,7 @@ CREATE TABLE IF NOT EXISTS `store_delivery_documents` (
   `updated_at` datetime NOT NULL,
   PRIMARY KEY (`doc_id`),
   KEY `dd_partner_idx` (`dp_id`) USING BTREE,
-  CONSTRAINT `store_delivery_documents_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_delivery_partners` (`dp_id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `store_delivery_documents_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_users` (`user_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ------------------------------------------------------------------
@@ -105,7 +76,7 @@ CREATE TABLE IF NOT EXISTS `store_delivery_orders` (
   PRIMARY KEY (`do_id`),
   KEY `do_partner_idx` (`dp_id`) USING BTREE,
   KEY `do_status_idx` (`status`) USING BTREE,
-  CONSTRAINT `store_delivery_orders_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_delivery_partners` (`dp_id`) ON DELETE SET NULL ON UPDATE CASCADE
+  CONSTRAINT `store_delivery_orders_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_users` (`user_id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ------------------------------------------------------------------
@@ -136,7 +107,7 @@ CREATE TABLE IF NOT EXISTS `store_delivery_shifts` (
   `incentive_bonus` decimal(10,2) NOT NULL DEFAULT '0.00',
   PRIMARY KEY (`shift_id`),
   KEY `ds_partner_idx` (`dp_id`) USING BTREE,
-  CONSTRAINT `store_delivery_shifts_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_delivery_partners` (`dp_id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `store_delivery_shifts_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_users` (`user_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ------------------------------------------------------------------
@@ -153,7 +124,7 @@ CREATE TABLE IF NOT EXISTS `store_delivery_wallet_txns` (
   `created_at` datetime NOT NULL,
   PRIMARY KEY (`txn_id`),
   KEY `dwt_partner_idx` (`dp_id`) USING BTREE,
-  CONSTRAINT `store_delivery_wallet_txns_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_delivery_partners` (`dp_id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `store_delivery_wallet_txns_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_users` (`user_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ------------------------------------------------------------------
@@ -167,7 +138,7 @@ CREATE TABLE IF NOT EXISTS `store_delivery_devices` (
   PRIMARY KEY (`device_id`),
   UNIQUE KEY `dd_token_uniq` (`token`) USING BTREE,
   KEY `dd_partner_idx` (`dp_id`) USING BTREE,
-  CONSTRAINT `store_delivery_devices_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_delivery_partners` (`dp_id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `store_delivery_devices_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_users` (`user_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ------------------------------------------------------------------
@@ -182,7 +153,7 @@ CREATE TABLE IF NOT EXISTS `store_delivery_notifications` (
   `created_at` datetime NOT NULL,
   PRIMARY KEY (`notif_id`),
   KEY `dn_partner_idx` (`dp_id`) USING BTREE,
-  CONSTRAINT `store_delivery_notifications_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_delivery_partners` (`dp_id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `store_delivery_notifications_ibfk_1` FOREIGN KEY (`dp_id`) REFERENCES `store_users` (`user_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ------------------------------------------------------------------

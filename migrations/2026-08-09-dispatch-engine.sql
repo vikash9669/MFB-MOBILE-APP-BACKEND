@@ -18,20 +18,20 @@ ALTER TABLE `store_delivery_orders`
   -- When the engine should START looking for a rider. Not the order time:
   -- dispatching the instant a restaurant accepts parks a rider at the counter
   -- for fifteen minutes. Computed from prep time minus travel time.
-  ADD COLUMN `dispatch_at`      DATETIME     NULL,
+  ADD COLUMN IF NOT EXISTS `dispatch_at`      DATETIME     NULL,
   -- waiting | searching | assigned | failed | cancelled
-  ADD COLUMN `dispatch_state`   VARCHAR(16)  NULL,
+  ADD COLUMN IF NOT EXISTS `dispatch_state`   VARCHAR(16)  NULL,
   -- How wide the current search has grown, in km. Drives the expanding radius.
-  ADD COLUMN `search_radius_km` DECIMAL(5,2) NULL,
+  ADD COLUMN IF NOT EXISTS `search_radius_km` DECIMAL(5,2) NULL,
   -- How many riders have been offered this job so far, across all rounds.
-  ADD COLUMN `offer_round`      SMALLINT     NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS `offer_round`      SMALLINT     NULL DEFAULT 0,
   -- Why dispatch gave up, when it did.
-  ADD COLUMN `dispatch_note`    VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS `dispatch_note`    VARCHAR(255) NULL,
   -- Set when several jobs are carried together. Null for a solo delivery.
-  ADD COLUMN `batch_id`         INT          NULL;
+  ADD COLUMN IF NOT EXISTS `batch_id`         INT          NULL;
 
 -- The engine's hot query is "jobs due for dispatch now".
-CREATE INDEX `do_dispatch_idx`
+CREATE INDEX IF NOT EXISTS `do_dispatch_idx`
   ON `store_delivery_orders` (`dispatch_state`, `dispatch_at`);
 
 -- ────────────────────────────────────────────── offer ledger
@@ -98,14 +98,21 @@ CREATE TABLE IF NOT EXISTS `store_delivery_batches` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ────────────────────────────────────────────── rider capacity
-ALTER TABLE `store_delivery_partners`
+-- These sit on store_users, not store_delivery_partners.
+--
+-- A delivery partner IS a store_users row with user_role = 3 — see
+-- 2026-08-21-unify-delivery-partners-into-store-users.sql. Targeting the old
+-- table here would put the columns somewhere the dispatch code no longer looks,
+-- and because util/dispatch/columns.js probes for them and stays dormant when
+-- they are absent, the engine would silently never start.
+ALTER TABLE `store_users`
   -- How many concurrent jobs this rider may carry. 1 keeps today's behaviour
   -- exactly; raising it is what enables batching for that rider.
-  ADD COLUMN `dp_max_concurrent` TINYINT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS `dp_max_concurrent` TINYINT NULL DEFAULT 1,
   -- Last time the engine offered this rider anything, so the scorer can favour
   -- riders who have been waiting — otherwise the same few near the market get
   -- every job and everyone else earns nothing.
-  ADD COLUMN `dp_last_offer_at`  DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS `dp_last_offer_at`  DATETIME NULL,
   -- Freshness of dp_lat/dp_lng. A rider whose GPS died an hour ago must not be
   -- scored as if they are still parked outside the restaurant.
-  ADD COLUMN `dp_location_at`    DATETIME NULL;
+  ADD COLUMN IF NOT EXISTS `dp_location_at`    DATETIME NULL;

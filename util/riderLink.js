@@ -16,9 +16,7 @@
 // Nothing here modifies an existing account. If a store_users row already has
 // the phone it is linked as-is; only a genuinely absent rider is created. That
 // keeps the old panel behaviour untouched — this only ever adds.
-const crypto = require("crypto");
 const { User, DeliveryPartner } = require("../models");
-const passwords = require("./password");
 
 const RIDER_ROLE = 3;
 
@@ -28,8 +26,17 @@ const normalizePhone = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 async function findPanelRider(phone) {
   const p = normalizePhone(phone);
   if (!p) return null;
-  return User.findOne({ where: { user_phone: p } });
+  // Since the tables were unified this is the partner's own row — the lookup
+  // survives because plenty of callers still ask by phone.
+  // Role-scoped, not phone-only. A phone very often already belongs to a
+  // customer account — the same person ordered food before applying to
+  // deliver it — and matching that row made a pending application look
+  // already-linked. The panel drops linked applications from its "needs a
+  // decision" list and shows the roster of user_role 3, so the applicant
+  // appeared in neither and was invisible to staff.
+  return User.findOne({ where: { user_phone: p, user_role: RIDER_ROLE } });
 }
+
 
 /**
  * Ensures the approved partner also exists as a panel rider, and returns it.
@@ -43,51 +50,26 @@ async function findPanelRider(phone) {
  * password of "" against the plaintext comparison in admin/auth.js.
  */
 async function ensurePanelRider(partner) {
+  // Nothing to create any more: a partner IS the store_users rider row, so the
+  // roster, order assignment and reports can all see them the moment they sign
+  // up. This used to create a parallel store_users row on approval, and
+  // refused when the phone already belonged to a customer — which is how an
+  // approved partner could end up invisible to every panel screen.
+  //
+  // Kept as a function because approval still calls it and still wants the
+  // rider back; it now just confirms the row is really a rider.
   const phone = normalizePhone(partner.dp_phone);
   if (!phone) return { rider: null, created: false, reason: "no phone" };
 
-  const existing = await findPanelRider(phone);
-  if (existing) {
-    // Deliberately not mutating: the row may be a customer or an existing
-    // rider, and silently rewriting somebody's role is exactly the kind of
-    // change that breaks old behaviour.
-    return {
-      rider: existing,
-      created: false,
-      reason:
-        Number(existing.user_role) === RIDER_ROLE
-          ? "already a panel rider"
-          : `phone belongs to an account with user_role ${existing.user_role}`,
-    };
-  }
+  const rider = await findPanelRider(phone);
+  if (rider) return { rider, created: false, reason: "partner is the panel rider" };
 
-  const name = String(partner.dp_name || "").trim() || `Rider ${phone.slice(-4)}`;
-  const rider = await User.create({
-    user_role: RIDER_ROLE,
-    user_name: name.slice(0, 40),
-    user_email: partner.dp_email || `dp${partner.dp_id}@example.com`,
-    user_phone: phone,
-    user_phone_1: phone,
-    user_otp: "000000",
-    user_code: `D${Date.now().toString().slice(-8)}`,
-    user_manager: 0,
-    user_landmark: "",
-    user_city: "1",
-    user_state: 1,
-    user_zip: "000000",
-    user_location: 0,
-    // Hashed like any other, so nothing downstream has to treat this column
-    // as sometimes-raw. The value is random and never handed out, so the
-    // account stays unusable until someone sets a real password.
-    user_password: passwords.hash(crypto.randomBytes(24).toString("hex")),
-    user_registered: new Date(),
-    user_login: 0,
-    // Approved in the app, so listed and able to take orders straight away.
-    user_active: 1,
-    user_status: 1,
-  });
-
-  return { rider, created: true, reason: "created from an approved partner" };
+  // Only reachable if something changed the row's role out from under us.
+  return {
+    rider: null,
+    created: false,
+    reason: `no store_users row with user_role ${RIDER_ROLE} for this partner`,
+  };
 }
 
 /**
@@ -157,8 +139,11 @@ async function findPartnerForPanelRider(userId) {
 async function panelRiderIdsByPhone(phones) {
   const list = [...new Set(phones.map(normalizePhone).filter(Boolean))];
   if (list.length === 0) return new Map();
+  // Role-scoped for the same reason as findPanelRider: a customer account on
+  // the same number is not a panel rider, and treating it as one hides the
+  // application from the review queue.
   const rows = await User.findAll({
-    where: { user_phone: list },
+    where: { user_phone: list, user_role: RIDER_ROLE },
     attributes: ["user_id", "user_phone"],
     raw: true,
   });

@@ -757,7 +757,8 @@ async function deliverySummary(orderId) {
     let rider = null;
     if (job.dp_id != null) {
       const [row] = await sequelize.query(
-        "SELECT `dp_id`, `dp_name`, `dp_phone`, `dp_rating` FROM `store_delivery_partners` WHERE `dp_id` = :dpId",
+        "SELECT `user_id` AS `dp_id`, `user_name` AS `dp_name`, `user_phone` AS `dp_phone`, `dp_rating` " +
+            "FROM `store_users` WHERE `user_id` = :dpId AND `user_role` = 3",
         { replacements: { dpId: job.dp_id }, type: QueryTypes.SELECT }
       );
       if (row) {

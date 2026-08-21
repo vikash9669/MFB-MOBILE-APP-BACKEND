@@ -19,24 +19,24 @@ ALTER TABLE `store_payment_intents`
   -- Nullable rather than DEFAULT 'checkout': a NULL on an existing row is
   -- honest about never having been classified, and the code treats
   -- NULL and 'checkout' identically.
-  ADD COLUMN `purpose` VARCHAR(16) NULL,
+  ADD COLUMN IF NOT EXISTS `purpose` VARCHAR(16) NULL,
 
   -- The delivery job the money was collected against. Null for checkout
   -- intents, which exist before any delivery job does.
-  ADD COLUMN `do_id` INT NULL,
+  ADD COLUMN IF NOT EXISTS `do_id` INT NULL,
 
   -- Which rider was standing there. Recorded for disputes ("the customer says
   -- they paid") and to measure who is actually offering the option.
-  ADD COLUMN `collected_by_dp_id` INT NULL,
+  ADD COLUMN IF NOT EXISTS `collected_by_dp_id` INT NULL,
 
   -- Where the customer is sent to pay. Cached so re-opening the screen shows
   -- the same QR instead of minting a second payment for one order.
-  ADD COLUMN `collect_url` VARCHAR(1000) NULL,
+  ADD COLUMN IF NOT EXISTS `collect_url` VARCHAR(1000) NULL,
 
   -- PhonePe expires its checkout; past this the QR is dead and a new intent
   -- must be created.
-  ADD COLUMN `expires_at` DATETIME NULL;
+  ADD COLUMN IF NOT EXISTS `expires_at` DATETIME NULL;
 
 -- The hot lookup is "is there a live collection intent for this job?".
-CREATE INDEX `intent_collection_idx`
+CREATE INDEX IF NOT EXISTS `intent_collection_idx`
   ON `store_payment_intents` (`do_id`, `purpose`, `status`);

@@ -94,7 +94,7 @@ async function createOffer(job, candidate, round) {
     // Fairness bookkeeping: the scorer favours riders who have waited longest,
     // which only works if being offered something resets the clock.
     await sequelize.query(
-      "UPDATE `store_delivery_partners` SET `dp_last_offer_at` = UTC_TIMESTAMP() WHERE `dp_id` = :dpId",
+      "UPDATE `store_users` SET `dp_last_offer_at` = UTC_TIMESTAMP() WHERE `user_id` = :dpId",
       { replacements: { dpId: candidate.rider.dpId }, type: QueryTypes.UPDATE }
     );
 

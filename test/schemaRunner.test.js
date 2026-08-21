@@ -68,11 +68,23 @@ test("a fully migrated database is left completely alone", async () => {
 
 test("a legacy database gets the columns but not the tables it already has", async () => {
   // The real deployment case: legacy tables present, delivery tables absent.
-  const legacyTables = [...new Set(COLUMNS.map((c) => c.table))];
+  //
+  // Only tables this migration set does NOT create count as legacy. Some
+  // COLUMNS now target tables that TABLES also creates — the dispatch and
+  // doorstep-collection columns land on store_delivery_orders and
+  // store_payment_intents — so deriving the legacy set from COLUMNS alone
+  // would mark those as pre-existing and understate what gets created.
+  const created = new Set(TABLES.map((t) => t.name));
+  const legacyTables = [...new Set(COLUMNS.map((c) => c.table))].filter((t) => !created.has(t));
   const db = fakeDb({ tables: legacyTables, columns: [] });
   const r = await withAutoMigrate("true", () => ensureSchema(db));
   assert.equal(r.failed, 0);
-  assert.equal(r.applied, TABLES.length + COLUMNS.length);
+  // Columns whose table is created in this same run arrive inside the CREATE
+  // TABLE, so they are not applied separately. Only columns on tables that
+  // already existed become ALTERs.
+  const createdNow = new Set(TABLES.map((t) => t.name));
+  const alters = COLUMNS.filter((c) => !createdNow.has(c.table)).length;
+  assert.equal(r.applied, TABLES.length + alters);
   const creates = db.executed.filter((s) => /CREATE TABLE/.test(s));
   assert.equal(creates.length, TABLES.length);
   // It must not try to re-create a table the legacy schema already has.
@@ -87,12 +99,18 @@ test("a legacy database gets the columns but not the tables it already has", asy
 test("half-migrated is repaired without touching what is already there", async () => {
   // Hand-edited databases are the norm, and are exactly what a version ledger
   // cannot recover from.
+  const createdTables = new Set(TABLES.map((t) => t.name));
   const db = fakeDb({
-    tables: [TABLES[0].name, ...new Set(COLUMNS.map((c) => c.table))],
+    tables: [
+      TABLES[0].name,
+      ...[...new Set(COLUMNS.map((c) => c.table))].filter((t) => !createdTables.has(t)),
+    ],
     columns: [`${COLUMNS[0].table}.${COLUMNS[0].column}`],
   });
   const r = await withAutoMigrate("true", () => ensureSchema(db));
-  assert.equal(r.applied, TABLES.length - 1 + COLUMNS.length - 1);
+  const madeNow = new Set(TABLES.map((t) => t.name));
+  const alterable = COLUMNS.filter((c) => !madeNow.has(c.table)).length;
+  assert.equal(r.applied, TABLES.length - 1 + alterable - 1);
   assert.ok(
     !db.executed.some((s) => s.includes(`\`${COLUMNS[0].column}\``)),
     "the column that already exists must not be re-added"

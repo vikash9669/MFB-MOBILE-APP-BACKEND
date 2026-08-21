@@ -43,8 +43,8 @@ exports.status = async (req, res) => {
     const [fleet] = await sequelize.query(
       `SELECT COUNT(*) AS total,
               SUM(\`dp_online\` = 1) AS online
-         FROM \`store_delivery_partners\`
-        WHERE \`dp_active\` = 1 AND \`dp_verification_status\` = 'approved'`,
+         FROM \`store_users\`
+        WHERE \`user_role\` = 3 AND \`dp_active\` = 1 AND \`dp_verification_status\` = 'approved'`,
       { type: QueryTypes.SELECT }
     );
 
@@ -106,11 +106,11 @@ exports.jobDetail = async (req, res) => {
     if (job == null) return res.status(404).json({ message: "Job not found" });
 
     const offers = await sequelize.query(
-      `SELECT o.\`dp_id\`, p.\`dp_name\`, o.\`state\`, o.\`round\`, o.\`score\`,
+      `SELECT o.\`dp_id\`, p.\`user_name\` AS \`dp_name\`, o.\`state\`, o.\`round\`, o.\`score\`,
               o.\`score_parts\`, o.\`distance_km\`, o.\`eta_min\`,
               o.\`offered_at\`, o.\`expires_at\`, o.\`responded_at\`
          FROM \`store_delivery_offers\` o
-         LEFT JOIN \`store_delivery_partners\` p ON p.\`dp_id\` = o.\`dp_id\`
+         LEFT JOIN \`store_users\` p ON p.\`user_id\` = o.\`dp_id\` AND p.\`user_role\` = 3
         WHERE o.\`do_id\` = :doId
         ORDER BY o.\`round\` ASC`,
       { replacements: { doId }, type: QueryTypes.SELECT }

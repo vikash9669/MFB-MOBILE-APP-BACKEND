@@ -5,7 +5,7 @@
 // accounts were made directly in the database. Staff creation is included here
 // because leaving it out is what forced a SQL script to bootstrap the panel.
 const { Op } = require("sequelize");
-const { User, Business, UserBank, Location } = require("../../models");
+const { User, Business, UserBank, Location, DeliveryPartner } = require("../../models");
 // Map pins live on store_users but deliberately not on the User model — see
 // util/vendorColumns.js for why naming them there would break sign-in on any
 // database that has not run 2026-08-18-vendor-geo.sql.
@@ -74,6 +74,27 @@ exports.create = async (req, res) => {
       user_registered: new Date(),
       user_status: 1,
     });
+
+    // A rider created here is one an admin is vouching for, so approve them on
+    // the spot. Left at the column default of 'pending' they would pass every
+    // panel check and still be refused by the partner app, with no way to
+    // submit an application from a row they did not create. A partner signing
+    // up through the app still starts at 'pending'.
+    //
+    // Written through DeliveryPartner rather than in the User.create above:
+    // the User model does not declare the dp_ columns, so Sequelize drops them
+    // from the insert without complaining.
+    if (Number(role) === RIDER_ROLE) {
+      await DeliveryPartner.update(
+        {
+          dp_verification_status: "approved",
+          dp_reviewed_at: new Date(),
+          dp_active: 1,
+          dp_code: `R${String(created.user_id).padStart(6, "0")}`,
+        },
+        { where: { dp_id: created.user_id } }
+      );
+    }
 
     // A vendor is only usable once it has a business row; the storefront and
     // the order pipeline both read business_name from it.

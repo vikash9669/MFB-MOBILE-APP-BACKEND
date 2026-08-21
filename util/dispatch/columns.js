@@ -25,7 +25,7 @@ async function detect() {
     const qi = sequelize.getQueryInterface();
     const [orders, partners] = await Promise.all([
       qi.describeTable("store_delivery_orders").catch(() => ({})),
-      qi.describeTable("store_delivery_partners").catch(() => ({})),
+      qi.describeTable("store_users").catch(() => ({})),
     ]);
     result.orders = ORDER_COLUMNS.every((c) => orders[c] != null);
     result.partners = PARTNER_COLUMNS.every((c) => partners[c] != null);

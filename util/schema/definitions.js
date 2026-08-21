@@ -69,49 +69,6 @@ const TABLES = [
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
   },
   {
-    name: "store_delivery_partners",
-    ddl: `CREATE TABLE IF NOT EXISTS \`store_delivery_partners\` (
-  \`dp_id\` int NOT NULL AUTO_INCREMENT,
-  \`dp_name\` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  \`dp_email\` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  \`dp_phone\` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  \`dp_code\` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  \`dp_request_id\` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_token_version\` int NOT NULL DEFAULT '1',
-  \`dp_settings\` json DEFAULT NULL,
-  \`dp_vehicle_type\` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Bike',
-  \`dp_vehicle_number\` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_photo\` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  \`dp_verification_status\` enum('pending','under_review','approved','rejected') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
-  \`dp_rejection_reason\` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_submitted_at\` datetime DEFAULT NULL,
-  \`dp_reviewed_at\` datetime DEFAULT NULL,
-  \`dp_bank_account\` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_bank_ifsc\` varchar(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_bank_holder\` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_upi_id\` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  \`dp_online\` tinyint(1) NOT NULL DEFAULT '0',
-  \`dp_lat\` decimal(10,7) DEFAULT NULL,
-  \`dp_lng\` decimal(10,7) DEFAULT NULL,
-  \`dp_wallet_balance\` decimal(10,2) NOT NULL DEFAULT '0.00',
-  \`dp_cash_in_hand\` decimal(10,2) NOT NULL DEFAULT '0.00',
-  \`dp_rating\` decimal(3,2) NOT NULL DEFAULT '5.00',
-  \`dp_total_deliveries\` int NOT NULL DEFAULT '0',
-  \`dp_on_time_pct\` int NOT NULL DEFAULT '100',
-  \`dp_acceptance_pct\` int NOT NULL DEFAULT '100',
-  \`dp_completion_pct\` int NOT NULL DEFAULT '100',
-  \`dp_cancellation_pct\` decimal(4,1) NOT NULL DEFAULT '0.0',
-  \`dp_avg_delivery_min\` int NOT NULL DEFAULT '0',
-  \`dp_active\` tinyint(1) NOT NULL DEFAULT '1',
-  \`dp_registered\` datetime NOT NULL,
-  \`dp_last_login\` datetime DEFAULT NULL,
-  \`dp_max_concurrent\` tinyint DEFAULT '1',
-  \`dp_last_offer_at\` datetime DEFAULT NULL,
-  \`dp_location_at\` datetime DEFAULT NULL,
-  PRIMARY KEY (\`dp_id\`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
-  },
-  {
     name: "store_delivery_ratings",
     ddl: `CREATE TABLE IF NOT EXISTS \`store_delivery_ratings\` (
   \`rating_id\` int NOT NULL AUTO_INCREMENT,
@@ -241,7 +198,7 @@ const TABLES = [
   PRIMARY KEY (\`device_id\`),
   UNIQUE KEY \`dd_token_uniq\` (\`token\`) USING BTREE,
   KEY \`dd_partner_idx\` (\`dp_id\`) USING BTREE,
-  CONSTRAINT \`store_delivery_devices_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_devices_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
   {
@@ -257,7 +214,7 @@ const TABLES = [
   \`updated_at\` datetime NOT NULL,
   PRIMARY KEY (\`doc_id\`),
   KEY \`dd_partner_idx\` (\`dp_id\`) USING BTREE,
-  CONSTRAINT \`store_delivery_documents_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_documents_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
   {
@@ -273,7 +230,7 @@ const TABLES = [
   \`created_at\` datetime NOT NULL,
   PRIMARY KEY (\`notif_id\`),
   KEY \`dn_partner_idx\` (\`dp_id\`) USING BTREE,
-  CONSTRAINT \`store_delivery_notifications_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_notifications_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
   {
@@ -327,7 +284,7 @@ const TABLES = [
   KEY \`do_partner_idx\` (\`dp_id\`) USING BTREE,
   KEY \`do_status_idx\` (\`status\`) USING BTREE,
   KEY \`do_dispatch_idx\` (\`dispatch_state\`,\`dispatch_at\`),
-  CONSTRAINT \`store_delivery_orders_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE SET NULL ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_orders_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
   {
@@ -347,7 +304,7 @@ const TABLES = [
   PRIMARY KEY (\`session_id\`),
   KEY \`dsess_partner_idx\` (\`dp_id\`) USING BTREE,
   KEY \`dsess_date_idx\` (\`session_date\`) USING BTREE,
-  CONSTRAINT \`store_delivery_sessions_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_sessions_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   },
   {
@@ -366,7 +323,7 @@ const TABLES = [
   \`incentive_bonus\` decimal(10,2) NOT NULL DEFAULT '0.00',
   PRIMARY KEY (\`shift_id\`),
   KEY \`ds_partner_idx\` (\`dp_id\`) USING BTREE,
-  CONSTRAINT \`store_delivery_shifts_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_shifts_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
   {
@@ -384,7 +341,7 @@ const TABLES = [
   \`created_at\` datetime NOT NULL,
   PRIMARY KEY (\`txn_id\`),
   KEY \`dwt_partner_idx\` (\`dp_id\`) USING BTREE,
-  CONSTRAINT \`store_delivery_wallet_txns_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_delivery_partners\` (\`dp_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT \`store_delivery_wallet_txns_ibfk_1\` FOREIGN KEY (\`dp_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
   {
@@ -434,12 +391,74 @@ const COLUMNS = [
   { table: "store_users", column: "user_lng", sql: "ALTER TABLE `store_users` ADD COLUMN `user_lng` decimal(10,7) NULL" },
   { table: "store_users", column: "user_formatted", sql: "ALTER TABLE `store_users` ADD COLUMN `user_formatted` varchar(255) NULL" },
   { table: "store_users", column: "user_place_id", sql: "ALTER TABLE `store_users` ADD COLUMN `user_place_id` varchar(128) NULL" },
+
+  // Delivery-partner fields. A partner is a store_users row with user_role 3;
+  // see migrations/2026-08-21-unify-delivery-partners-into-store-users.sql.
+  { table: "store_users", column: "dp_code", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_code` varchar(12) NOT NULL DEFAULT ''" },
+  { table: "store_users", column: "dp_request_id", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_request_id` varchar(100) NULL" },
+  { table: "store_users", column: "dp_token_version", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_token_version` int(11) NOT NULL DEFAULT 1" },
+  { table: "store_users", column: "dp_settings", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_settings` longtext NULL" },
+  { table: "store_users", column: "dp_vehicle_type", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_vehicle_type` varchar(30) NOT NULL DEFAULT 'Bike'" },
+  { table: "store_users", column: "dp_vehicle_number", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_vehicle_number` varchar(20) NULL" },
+  { table: "store_users", column: "dp_verification_status", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_verification_status` enum('pending','under_review','approved','rejected') NOT NULL DEFAULT 'pending'" },
+  { table: "store_users", column: "dp_rejection_reason", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_rejection_reason` varchar(255) NULL" },
+  { table: "store_users", column: "dp_submitted_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_submitted_at` datetime NULL" },
+  { table: "store_users", column: "dp_reviewed_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_reviewed_at` datetime NULL" },
+  { table: "store_users", column: "dp_bank_account", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_bank_account` varchar(30) NULL" },
+  { table: "store_users", column: "dp_bank_ifsc", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_bank_ifsc` varchar(15) NULL" },
+  { table: "store_users", column: "dp_bank_holder", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_bank_holder` varchar(80) NULL" },
+  { table: "store_users", column: "dp_upi_id", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_upi_id` varchar(80) NULL" },
+  { table: "store_users", column: "dp_online", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_online` tinyint(1) NOT NULL DEFAULT 0" },
+  { table: "store_users", column: "dp_lat", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_lat` decimal(10,7) NULL" },
+  { table: "store_users", column: "dp_lng", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_lng` decimal(10,7) NULL" },
+  { table: "store_users", column: "dp_wallet_balance", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_wallet_balance` decimal(10,2) NOT NULL DEFAULT 0.00" },
+  { table: "store_users", column: "dp_cash_in_hand", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_cash_in_hand` decimal(10,2) NOT NULL DEFAULT 0.00" },
+  { table: "store_users", column: "dp_rating", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_rating` decimal(3,2) NOT NULL DEFAULT 5.00" },
+  { table: "store_users", column: "dp_total_deliveries", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_total_deliveries` int(11) NOT NULL DEFAULT 0" },
+  { table: "store_users", column: "dp_on_time_pct", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_on_time_pct` int(11) NOT NULL DEFAULT 100" },
+  { table: "store_users", column: "dp_acceptance_pct", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_acceptance_pct` int(11) NOT NULL DEFAULT 100" },
+  { table: "store_users", column: "dp_completion_pct", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_completion_pct` int(11) NOT NULL DEFAULT 100" },
+  { table: "store_users", column: "dp_cancellation_pct", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_cancellation_pct` decimal(4,1) NOT NULL DEFAULT 0.0" },
+  { table: "store_users", column: "dp_avg_delivery_min", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_avg_delivery_min` int(11) NOT NULL DEFAULT 0" },
+  { table: "store_users", column: "dp_active", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_active` tinyint(1) NOT NULL DEFAULT 1" },
   { table: "store_users_shipping_address", column: "delivery_lat", sql: "ALTER TABLE `store_users_shipping_address` ADD COLUMN `delivery_lat` decimal(10,7) NULL" },
   { table: "store_users_shipping_address", column: "delivery_lng", sql: "ALTER TABLE `store_users_shipping_address` ADD COLUMN `delivery_lng` decimal(10,7) NULL" },
   { table: "store_users_shipping_address", column: "delivery_house", sql: "ALTER TABLE `store_users_shipping_address` ADD COLUMN `delivery_house` varchar(255) NULL" },
   { table: "store_users_shipping_address", column: "delivery_label", sql: "ALTER TABLE `store_users_shipping_address` ADD COLUMN `delivery_label` varchar(20) NULL" },
   { table: "store_users_shipping_address", column: "delivery_formatted", sql: "ALTER TABLE `store_users_shipping_address` ADD COLUMN `delivery_formatted` varchar(500) NULL" },
   { table: "store_users_shipping_address", column: "delivery_place_id", sql: "ALTER TABLE `store_users_shipping_address` ADD COLUMN `delivery_place_id` varchar(255) NULL" },
+  // Columns that previously existed only in the hand-run .sql migrations.
+  // Listed here so a database provisioned by boot alone is complete — the
+  // dispatch engine and doorstep collection both probe for their columns and
+  // stay dormant when absent, so a gap here is a feature that silently never
+  // starts rather than an error anyone would notice.
+  // AFTER clauses are dropped deliberately: column order is irrelevant and an
+  // AFTER referencing a column that does not exist yet fails the ALTER.
+  { table: "store_delivery_sessions", column: "start_lat", sql: "ALTER TABLE `store_delivery_sessions` ADD COLUMN `start_lat` DECIMAL(10,7) NULL" },
+  { table: "store_delivery_sessions", column: "start_lng", sql: "ALTER TABLE `store_delivery_sessions` ADD COLUMN `start_lng` DECIMAL(10,7) NULL" },
+  { table: "store_delivery_sessions", column: "end_lat", sql: "ALTER TABLE `store_delivery_sessions` ADD COLUMN `end_lat` DECIMAL(10,7) NULL" },
+  { table: "store_delivery_sessions", column: "end_lng", sql: "ALTER TABLE `store_delivery_sessions` ADD COLUMN `end_lng` DECIMAL(10,7) NULL" },
+  { table: "store_delivery_orders", column: "dispatch_at", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `dispatch_at` DATETIME NULL" },
+  { table: "store_delivery_orders", column: "dispatch_state", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `dispatch_state` VARCHAR(16) NULL" },
+  { table: "store_delivery_orders", column: "search_radius_km", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `search_radius_km` DECIMAL(5,2) NULL" },
+  { table: "store_delivery_orders", column: "offer_round", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `offer_round` SMALLINT NULL DEFAULT 0" },
+  { table: "store_delivery_orders", column: "dispatch_note", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `dispatch_note` VARCHAR(255) NULL" },
+  { table: "store_delivery_orders", column: "batch_id", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `batch_id` INT NULL" },
+  { table: "store_users", column: "dp_max_concurrent", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_max_concurrent` TINYINT NULL DEFAULT 1" },
+  { table: "store_users", column: "dp_last_offer_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_last_offer_at` DATETIME NULL" },
+  { table: "store_users", column: "dp_location_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_location_at` DATETIME NULL" },
+  { table: "store_payment_intents", column: "merchant_refund_id", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `merchant_refund_id` VARCHAR(64) NULL" },
+  { table: "store_payment_intents", column: "provider_refund_id", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `provider_refund_id` VARCHAR(64) NULL" },
+  { table: "store_payment_intents", column: "refund_status", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `refund_status` VARCHAR(16) NULL" },
+  { table: "store_payment_intents", column: "refund_amount", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `refund_amount` DECIMAL(10,2) NULL" },
+  { table: "store_payment_intents", column: "refunded_at", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `refunded_at` DATETIME NULL" },
+  { table: "store_payment_intents", column: "refund_failure", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `refund_failure` VARCHAR(255) NULL" },
+  { table: "store_payment_intents", column: "purpose", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `purpose` VARCHAR(16) NULL" },
+  { table: "store_payment_intents", column: "do_id", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `do_id` INT NULL" },
+  { table: "store_payment_intents", column: "collected_by_dp_id", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `collected_by_dp_id` INT NULL" },
+  { table: "store_payment_intents", column: "collect_url", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `collect_url` VARCHAR(1000) NULL" },
+  { table: "store_payment_intents", column: "expires_at", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `expires_at` DATETIME NULL" },
+
 ];
 
 module.exports = { TABLES, COLUMNS };
