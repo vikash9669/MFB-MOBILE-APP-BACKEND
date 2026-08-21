@@ -454,11 +454,19 @@ const createOrder = async (req, res) => {
     platform,
   } = req.body || {};
 
-  // priceCart destructures the cart, so an absent one failed deep inside with
-  // "Cannot convert undefined or null to object" and surfaced as a 500.
-  if (!address_id || !business_user_id || !Array.isArray(product_ids_with_quantity)) {
+  // The cart is an OBJECT keyed by product id, not an array — util/orders.js
+  // reads it with Object.keys(). An earlier version of this guard tested
+  // Array.isArray() and so rejected every real order with a 400, which on the
+  // app looked like the Place Order button doing nothing at all.
+  const cartIsUsable =
+    product_ids_with_quantity != null &&
+    typeof product_ids_with_quantity === "object" &&
+    !Array.isArray(product_ids_with_quantity) &&
+    Object.keys(product_ids_with_quantity).length > 0;
+
+  if (!address_id || !business_user_id || !cartIsUsable) {
     return res.status(400).json({
-      message: "address_id, business_user_id and product_ids_with_quantity are required",
+      message: "address_id, business_user_id and a non-empty cart are required",
     });
   }
 
