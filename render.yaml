@@ -63,6 +63,13 @@ services:
       - { key: MSGPROVIDER,            value: twilio }
       - { key: CUSTOMER_ALERT_CHANNELS, value: sms }
       - { key: VENDOR_ALERT_CHANNELS,  value: sms }
+      # New rider application -> admin staff. "panel" is the free, local
+      # channel; add email/sms once ADMIN_ALERT_PHONES and RIDER_ALERT_EMAILS
+      # are set and the Twilio account is active again.
+      - { key: RIDER_ALERT_CHANNELS,   value: panel }
+      # Approval / rejection -> the rider. The in-app notification is separate
+      # and always sent; these are the off-app copies.
+      - { key: RIDER_DECISION_CHANNELS, value: "email,sms" }
       - { key: AUTO_MIGRATE,           value: "true" }
       - { key: OTP_DEV_MODE,           value: "false" }
       # Leave OTP_DEV_NUMBERS UNSET in production.

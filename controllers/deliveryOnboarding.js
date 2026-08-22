@@ -4,6 +4,7 @@
 // reports what's still needed and moves a completed application to
 // "under_review". It never writes to the customer/vendor tables.
 const { DeliveryPartner, DeliveryDocument } = require("../models");
+const { notifyAdminsRiderApplied } = require("../util/adminNotify");
 
 // KYC documents a partner may upload, in display order.
 //
@@ -149,6 +150,26 @@ exports.submit = async (req, res) => {
       dp_submitted_at: new Date(),
       dp_rejection_reason: null,
     });
+
+    // Tell admin staff there is something to review. This is the moment the
+    // application becomes actionable — NOT when the partner row is created,
+    // which happens the instant someone requests an OTP and would page an
+    // admin for every abandoned signup.
+    //
+    // notifyAdminsRiderApplied never throws; the try/catch is here so that
+    // stays true even if that changes. An alert must never be able to undo a
+    // submission that has already been written.
+    try {
+      const alert = await notifyAdminsRiderApplied(partner);
+      console.log(
+        `MFB ~ rider application dp_id ${partner.dp_id} ~ admins notified:`,
+        `panel=${alert.panel} realtime=${alert.realtime}`,
+        `email=${alert.email ? alert.email.sent : "off"}`,
+        `sms=${alert.sms ? alert.sms.sent : "off"}`
+      );
+    } catch (alertErr) {
+      console.log("MFB-error-logs ~ rider application alert ~", alertErr.message);
+    }
 
     res.json({
       message: "Application submitted for review",

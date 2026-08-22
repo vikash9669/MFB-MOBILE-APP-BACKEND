@@ -179,6 +179,7 @@ const TABLES = [
   \`title\` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   \`body\` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   \`ref_order_id\` int DEFAULT NULL,
+  \`ref_partner_id\` int DEFAULT NULL,
   \`is_read\` tinyint(1) NOT NULL DEFAULT '0',
   \`created_at\` datetime NOT NULL,
   PRIMARY KEY (\`notif_id\`),
@@ -400,6 +401,9 @@ const COLUMNS = [
   { table: "store_users", column: "dp_settings", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_settings` longtext NULL" },
   { table: "store_users", column: "dp_vehicle_type", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_vehicle_type` varchar(30) NOT NULL DEFAULT 'Bike'" },
   { table: "store_users", column: "dp_vehicle_number", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_vehicle_number` varchar(20) NULL" },
+  // Its own column rather than store_users.user_image, which is varchar(100)
+  // and would truncate a base64 selfie to 100 characters without erroring.
+  { table: "store_users", column: "dp_photo", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_photo` longtext NULL" },
   { table: "store_users", column: "dp_verification_status", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_verification_status` enum('pending','under_review','approved','rejected') NOT NULL DEFAULT 'pending'" },
   { table: "store_users", column: "dp_rejection_reason", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_rejection_reason` varchar(255) NULL" },
   { table: "store_users", column: "dp_submitted_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_submitted_at` datetime NULL" },
@@ -458,6 +462,11 @@ const COLUMNS = [
   { table: "store_payment_intents", column: "collected_by_dp_id", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `collected_by_dp_id` INT NULL" },
   { table: "store_payment_intents", column: "collect_url", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `collect_url` VARCHAR(1000) NULL" },
   { table: "store_payment_intents", column: "expires_at", sql: "ALTER TABLE `store_payment_intents` ADD COLUMN `expires_at` DATETIME NULL" },
+
+  // Which delivery partner an admin alert refers to, so the panel notification
+  // can deep-link to the application. Nullable and ignored by every existing
+  // reader — the customer feed selects named columns, not *.
+  { table: "store_user_notifications", column: "ref_partner_id", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `ref_partner_id` INT NULL" },
 
 ];
 

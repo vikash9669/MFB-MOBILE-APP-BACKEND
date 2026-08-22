@@ -32,6 +32,8 @@ const menus = require("../controllers/admin/menus");
 const settings = require("../controllers/admin/settings");
 const deliveryAdmin = require("../controllers/deliveryAdmin");
 const panelShifts = require("../controllers/admin/shifts");
+const realtime = require("../controllers/admin/realtime");
+const adminNotifications = require("../controllers/admin/notifications");
 const {
   loginPerAccount,
   loginPerIp,
@@ -80,6 +82,13 @@ router.post("/auth/reset-password", otpVerify, register.resetPassword);
 // IP in the controller — it spends money on every call.
 router.get("/places/search", places.search);
 router.get("/places/reverse", places.reverse);
+
+// The live event stream. Above verifyPanelToken on purpose: the browser's
+// EventSource cannot set an Authorization header, so this one endpoint
+// authenticates itself with a short-lived ticket taken from the query string.
+// The ticket is minted below, behind the normal guard. See
+// controllers/admin/realtime.js for why that trade is acceptable.
+router.get("/realtime/stream", realtime.stream);
 
 // ── Signed in (any panel role) ─────────────────────────────────────
 router.use(verifyPanelToken);
@@ -155,6 +164,16 @@ router.put("/uploads/attach", uploads.attach);
 router.use(requireAdmin);
 
 router.get("/dashboard", dashboard.summary);
+
+// ── Panel notifications + live channel ─────────────────────────────
+// Admin staff only: these read store_user_notifications scoped to the signed-in
+// admin's own user_id, and mint the stream ticket.
+router.get("/realtime/ticket", realtime.ticket);
+router.get("/realtime/stats", realtime.stats);
+router.get("/notifications", adminNotifications.list);
+router.get("/notifications/unread-count", adminNotifications.unreadCount);
+router.post("/notifications/read-all", adminNotifications.markAllRead);
+router.post("/notifications/:id/read", adminNotifications.markRead);
 
 // ── Delivery dispatch engine ───────────────────────────────────────
 // The brief's /dispatch/* surface, under the panel's existing auth.

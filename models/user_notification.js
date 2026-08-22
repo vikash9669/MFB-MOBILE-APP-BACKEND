@@ -26,6 +26,10 @@ const UserNotification = sequelize.define(
     body: { type: DataTypes.STRING(255), allowNull: true },
     // Optional deep-link target (order the alert refers to).
     ref_order_id: { type: DataTypes.INTEGER, allowNull: true },
+    // Same idea for a delivery partner, used by the admin rider-request alert.
+    // Declared, not just added to the table: Sequelize builds its INSERT from
+    // declared attributes, so an undeclared key is dropped without an error.
+    ref_partner_id: { type: DataTypes.INTEGER, allowNull: true },
     is_read: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: 0 },
     created_at: { type: DataTypes.DATE, allowNull: false, defaultValue: NOW },
   },

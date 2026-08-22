@@ -5,6 +5,7 @@
 const { DeliveryPartner, DeliveryDocument } = require("../models");
 const { serializePartner } = require("../util/delivery");
 const { notifyPartner } = require("../util/deliveryNotify");
+const { alertRiderDecision } = require("../util/riderAlerts");
 const { summaryForPartner, recentForPartner } = require("../util/ratings");
 const {
   ensurePanelRider,
@@ -140,6 +141,20 @@ exports.verify = async (req, res) => {
       } catch (linkErr) {
         console.log("MFB-error-logs ~ approve panel-rider link ~ err:", linkErr);
       }
+
+      // Off-app confirmation. Last, and wrapped: the approval and the panel
+      // link are both already committed, and neither may be undone by an SMS
+      // provider being down — which, as of this writing, it is.
+      try {
+        const alert = await alertRiderDecision(partner, { approved: true });
+        console.log(
+          `MFB ~ approve dp_id ${partner.dp_id} ~ rider told:`,
+          `email=${alert.email ? alert.email.sent : "off"}`,
+          `sms=${alert.sms ? alert.sms.sent : "off"}`
+        );
+      } catch (alertErr) {
+        console.log("MFB-error-logs ~ approve rider alert ~", alertErr.message);
+      }
     } else {
       await partner.update({
         dp_verification_status: "rejected",
@@ -171,6 +186,20 @@ exports.verify = async (req, res) => {
         );
       } catch (accessErr) {
         console.log("MFB-error-logs ~ reject panel-rider access ~ err:", accessErr);
+      }
+
+      try {
+        const alert = await alertRiderDecision(partner, {
+          approved: false,
+          reason: partner.dp_rejection_reason,
+        });
+        console.log(
+          `MFB ~ reject dp_id ${partner.dp_id} ~ rider told:`,
+          `email=${alert.email ? alert.email.sent : "off"}`,
+          `sms=${alert.sms ? alert.sms.sent : "off"}`
+        );
+      } catch (alertErr) {
+        console.log("MFB-error-logs ~ reject rider alert ~", alertErr.message);
       }
     }
 

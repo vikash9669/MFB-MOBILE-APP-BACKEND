@@ -27,6 +27,68 @@ const DeliveryPartner = sequelize.define(
       allowNull: false,
       defaultValue: 3,
     },
+
+    // ── store_users columns a partner does not use ───────────────────
+    // Eleven columns on store_users are NOT NULL with no default and mean
+    // nothing to a delivery partner. They are declared here for one reason:
+    // Sequelize builds its INSERT from DECLARED attributes, so a value set
+    // on an undeclared key — which is what beforeCreate used to do — is
+    // dropped without a word. On this MariaDB (sql_mode has neither
+    // STRICT_TRANS_TABLES nor STRICT_ALL_TABLES) the INSERT then succeeded
+    // and quietly wrote '' into every one of them, including user_password
+    // on a row the PHP panel authenticates against.
+    //
+    // A defaultValue rather than a hook, because defaults are applied by
+    // Model.build and so survive paths a beforeCreate hook cannot reach.
+    // Only the phone-derived ones are left to the hook below.
+    user_phone_1: {
+      type: DataTypes.STRING(12),
+      allowNull: false,
+      defaultValue: "",
+    },
+    // Unusable by design: partners sign in with an OTP, never a password.
+    // Random, not blank — a blank one would let an empty submitted password
+    // match, and store_users is what the panel authenticates against.
+    user_password: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      defaultValue: () => crypto.randomBytes(16).toString("hex"),
+    },
+    user_landmark: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      defaultValue: "",
+    },
+    user_state: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+    },
+    user_city: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      defaultValue: "1",
+    },
+    user_zip: {
+      type: DataTypes.STRING(6),
+      allowNull: false,
+      defaultValue: "000000",
+    },
+    user_location: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    user_otp: {
+      type: DataTypes.STRING(6),
+      allowNull: false,
+      defaultValue: "000000",
+    },
+    user_code: {
+      type: DataTypes.STRING(12),
+      allowNull: false,
+      defaultValue: () => `D${Date.now().toString().slice(-8)}`,
+    },
     dp_id: {
       field: "user_id",
       autoIncrement: true,
@@ -36,13 +98,15 @@ const DeliveryPartner = sequelize.define(
     },
     dp_name: {
       field: "user_name",
-      type: DataTypes.STRING(80),
+      // 40, not 80 — store_users.user_name is varchar(40).
+      type: DataTypes.STRING(40),
       allowNull: false,
       defaultValue: "",
     },
     dp_email: {
       field: "user_email",
-      type: DataTypes.STRING(120),
+      // 80, not 120 — store_users.user_email is varchar(80).
+      type: DataTypes.STRING(80),
       allowNull: false,
       defaultValue: "",
     },
@@ -83,8 +147,11 @@ const DeliveryPartner = sequelize.define(
     },
     // Profile selfie (base64 data URI or URL), captured during onboarding.
     // LONGTEXT: a base64 image is far larger than TEXT's 64KB cap.
+    //
+    // Its own column, NOT store_users.user_image. That one is varchar(100) —
+    // the legacy panel keeps a filename there — so mapping onto it truncated
+    // every selfie to 100 characters without erroring.
     dp_photo: {
-      field: "user_image",
       type: DataTypes.TEXT("long"),
       allowNull: true,
     },
@@ -221,33 +288,23 @@ const DeliveryPartner = sequelize.define(
     defaultScope: { where: { user_role: 3 } },
     timestamps: false,
     hooks: {
-      // store_users carries eleven NOT NULL columns with no default that mean
-      // nothing to a delivery partner — landmark, city, zip and so on. Filling
-      // them here rather than at the call site keeps partner creation to the
-      // fields a partner actually has, and means anything that creates one in
-      // future cannot forget.
+      // Only the values derived from the phone number; everything else
+      // store_users demands is an attribute defaultValue above.
+      //
+      // Every key below must be a DECLARED attribute — setDataValue on a
+      // name Sequelize does not know about is a no-op that the INSERT then
+      // omits, silently. `dp_name` and `dp_email`, not `user_name` and
+      // `user_email`: the attribute is what setDataValue keys off, and the
+      // column name it maps to is not an alias for it.
       beforeCreate(partner) {
         const phone = String(partner.dp_phone || "").replace(/\D/g, "").slice(-10);
-        const set = (k, v) => {
-          if (partner.getDataValue(k) == null || partner.getDataValue(k) === "") {
-            partner.setDataValue(k, v);
-          }
+        const set = (attr, value) => {
+          const current = partner.getDataValue(attr);
+          if (current == null || current === "") partner.setDataValue(attr, value);
         };
-        set("user_role", 3);
-        set("user_name", `Rider ${phone.slice(-4)}`);
-        set("user_email", `dp${phone || Date.now()}@example.com`);
         set("user_phone_1", phone);
-        set("user_otp", "000000");
-        set("user_code", `D${Date.now().toString().slice(-8)}`);
-        set("user_landmark", "");
-        set("user_city", "1");
-        set("user_state", 1);
-        set("user_zip", "000000");
-        set("user_location", 0);
-        // Unusable by design: partners sign in with an OTP, never a password.
-        // Blank would be worse than random — an empty submitted password would
-        // then match, and store_users is what the panel authenticates against.
-        set("user_password", crypto.randomBytes(16).toString("hex"));
+        set("dp_name", `Rider ${phone.slice(-4)}`);
+        set("dp_email", `dp${phone || Date.now()}@example.com`);
       },
     },
     indexes: [

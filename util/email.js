@@ -154,8 +154,25 @@ async function sendMail({ to, subject, html }) {
   }
 }
 
+/**
+ * Is this an address worth sending to?
+ *
+ * The partner app generates a placeholder for a rider who never typed one
+ * (dp<phone>@example.com — see models/delivery_partner.js). Mailing it is a
+ * guaranteed bounce, and enough bounces cost an SMTP reputation. example.com
+ * and example.org are reserved by RFC 2606 precisely so they never resolve.
+ */
+const isRealAddress = (email) => {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e.includes("@")) return false;
+  const [local, domain] = e.split("@");
+  if (!local || !domain) return false;
+  return domain !== "example.com" && domain !== "example.org";
+};
+
 module.exports = {
   sendMail,
+  isRealAddress,
   mailFrom,
   mailConfigured,
   transportName,
