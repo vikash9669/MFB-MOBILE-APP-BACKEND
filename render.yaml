@@ -66,10 +66,15 @@ services:
       # arrive at the door on a phone that may have the app closed, so it stays
       # on SMS — it is the one alert push cannot replace.
       - { key: CUSTOMER_ALERT_CHANNELS, value: sms }
-      # Empty: the vendor new-order text, every chase reminder and the admin
-      # escalation SMS are all off. Vendors get the order email and the ringing
-      # panel bell; admins get a panel notification.
-      - { key: VENDOR_ALERT_CHANNELS,  value: "" }
+      # "none", not "": the vendor new-order text, every chase reminder and the
+      # admin escalation SMS are all off. Vendors get the order email and the
+      # ringing panel bell; admins get a panel notification.
+      #
+      # Use the literal "none" to switch a channel list off, never an empty
+      # value. Several of these treat blank as "unset, use the default" so that
+      # a field someone clears in the Render dashboard cannot silently kill the
+      # durable panel notification.
+      - { key: VENDOR_ALERT_CHANNELS,  value: none }
       # Order escalations (vendor sitting on an order, auto-cancel) go to the
       # panel bell. Add email/sms here to bring the old behaviour back.
       - { key: ORDER_ESCALATION_CHANNELS, value: panel }
@@ -79,9 +84,10 @@ services:
       - { key: RIDER_ALERT_CHANNELS,   value: panel }
       # Approval / rejection -> the rider. The in-app notification is separate
       # and always sent; these are the off-app copies.
-      # Empty: a rider learns the outcome from the in-app notification, which
+      # "none": a rider learns the outcome from the in-app notification, which
       # is always sent. Most riders have no real email address anyway.
-      - { key: RIDER_DECISION_CHANNELS, value: "" }
+      # An empty value here would mean "use the default", which is email,sms.
+      - { key: RIDER_DECISION_CHANNELS, value: none }
       - { key: AUTO_MIGRATE,           value: "true" }
       # TEMPORARY — Twilio credit is exhausted, so no real OTP can be sent.
       # With this on, every login, registration and password reset accepts

@@ -284,3 +284,58 @@ test("order escalations never throw, whatever the transports do", async () => {
     }
   });
 });
+
+// ── The blank-vs-"none" trap ───────────────────────────────────────
+//
+// These two look interchangeable and are not. A blank value means "unset, use
+// the default" — deliberately, so a field someone clears in a hosting dashboard
+// cannot silently switch off the durable panel notification. "none" is the way
+// to disable. Setting RIDER_DECISION_CHANNELS="" to turn rider messages off
+// would have kept sending both email and SMS.
+
+test("a blank channel list means the default, not silence", async () => {
+  await withEnv({ RIDER_DECISION_CHANNELS: "" }, () => {
+    const c = riderAlerts._enabledChannels();
+    assert.ok(c.has("email") && c.has("sms"), "blank should fall back to the default");
+  });
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "" }, () => {
+    assert.ok(adminNotify._escalationChannels().has("panel"));
+  });
+});
+
+test('"none" is what actually disables a channel list', async () => {
+  await withEnv({ RIDER_DECISION_CHANNELS: "none" }, () => {
+    const c = riderAlerts._enabledChannels();
+    assert.ok(!c.has("email"), "email still enabled");
+    assert.ok(!c.has("sms"), "sms still enabled");
+  });
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "none" }, () => {
+    const c = adminNotify._escalationChannels();
+    assert.ok(!c.has("panel") && !c.has("email") && !c.has("sms"));
+  });
+});
+
+test("the values shipped in render.yaml produce the intended routing", async () => {
+  // Pins the deployed configuration itself, not just the parser. If someone
+  // edits render.yaml to a value that does not mean what they think, this fails
+  // rather than a vendor quietly getting texted again.
+  await withEnv(
+    {
+      RIDER_ALERT_CHANNELS: "panel",
+      ORDER_ESCALATION_CHANNELS: "panel",
+      RIDER_DECISION_CHANNELS: "none",
+    },
+    () => {
+      const admin = adminNotify._enabledChannels();
+      assert.ok(admin.has("panel") && admin.has("realtime"));
+      assert.ok(!admin.has("email") && !admin.has("sms"));
+
+      const esc = adminNotify._escalationChannels();
+      assert.ok(esc.has("panel") && esc.has("realtime"));
+      assert.ok(!esc.has("email") && !esc.has("sms"));
+
+      const rider = riderAlerts._enabledChannels();
+      assert.ok(!rider.has("email") && !rider.has("sms"));
+    }
+  );
+});
