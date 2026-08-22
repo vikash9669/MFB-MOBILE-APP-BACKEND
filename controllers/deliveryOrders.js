@@ -17,6 +17,7 @@ const sequelize = require("../util/database");
 const { dispatchReady } = require("../util/dispatch/columns");
 const { startCollection, checkCollection } = require("../util/codCollection");
 const { sendDeliveryOtp } = require("../util/customerAlerts");
+const { isDevCode } = require("../util/otp");
 const { syncFromDelivery } = require("../util/orderStatusSync");
 const {
   acceptOffer,
@@ -491,7 +492,12 @@ exports.verifyPickup = async (req, res) => {
     //
     // A code is still honoured when one is sent, so an older app build keeps
     // working; it is simply no longer required.
-    if (otp != null && String(otp) !== "" && String(otp) !== String(order.pickup_otp)) {
+    if (
+      otp != null &&
+      String(otp) !== "" &&
+      String(otp) !== String(order.pickup_otp) &&
+      !isDevCode(otp)
+    ) {
       return res.status(401).json({ message: "Incorrect pickup code" });
     }
 
@@ -537,7 +543,10 @@ exports.verifyDelivery = async (req, res) => {
     if (order.status !== "picked_up") {
       return res.status(409).json({ message: "Order has not been picked up yet" });
     }
-    if (String(otp) !== String(order.drop_otp)) {
+    // isDevCode is inert unless OTP_DEV_MODE is on. It exists because the drop
+    // code reaches the customer by SMS only — with the provider unavailable,
+    // nobody can produce it and no delivery can ever be completed.
+    if (String(otp) !== String(order.drop_otp) && !isDevCode(otp)) {
       return res.status(401).json({ message: "Incorrect delivery OTP" });
     }
 

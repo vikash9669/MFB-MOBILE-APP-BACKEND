@@ -49,7 +49,9 @@ const AUTO_CANCEL = process.env.ORDER_AUTO_CANCEL !== "false";
 const EVERY_MS = 30000;
 const RECEIVED = 0;
 
-// orderId -> { firstSeen, reminders, lastReminderAt, escalated, cancelled }
+// orderId -> { firstSeen, reminders, lastReminderAt, escalated, abandoned }
+// `abandoned` means we are done with this order but it is still pending, so the
+// entry must stay to stop it being picked up again as if it were new.
 const tracked = new Map();
 
 // Orders at or below this existed before we started; not our business.
@@ -167,6 +169,7 @@ async function sweepOnce() {
     }
 
     const entry = tracked.get(order.order_id);
+    if (entry.abandoned) continue;
     const age = minutesSince(entry.firstSeen);
 
     // Order matters: cancel before reminding, so the last thing that happens
@@ -176,16 +179,42 @@ async function sweepOnce() {
         console.log("MFB-error-logs ~ accept sweeper ~ expire ~", err.message);
         return { ok: false };
       });
-      tracked.delete(order.order_id);
       if (result.ok) {
         const refund = result.refund?.accepted ? " +refund" : "";
         cancelled.push(`#${order.order_id}${refund}`);
+        // Leave the entry in place; the order drops out of `pending` on the
+        // next tick and the sweep above removes it.
+      } else {
+        // The cancel did not take and the order is still at status 0. Retrying
+        // every 30 seconds forever is not a recovery strategy — stop, and say
+        // so, because a stuck auto-cancel needs a person.
+        entry.abandoned = true;
+        console.log(
+          `MFB ~ accept sweeper ~ auto-cancel of #${order.order_id} did not take; not retrying.`
+        );
       }
       continue;
     }
 
+    // Given up on: mark it, do NOT delete it.
+    //
+    // Deleting the entry while the order is still at status 0 does not stop
+    // anything — the order is still in the next query's results, so 30 seconds
+    // later the block above sees an untracked pending order and re-adds it with
+    // a fresh clock and reminders: 0. The chase then restarts, forever. That is
+    // how order #276439 was re-texted 212 times across seven identical cycles.
+    //
+    // The entry is instead kept and flagged, and the "no longer pending" sweep
+    // above removes it for real once somebody accepts or cancels the order —
+    // which also means `tracked` stays bounded by the query limit.
     if (age >= GIVE_UP_MIN) {
-      tracked.delete(order.order_id);
+      if (!entry.abandoned) {
+        entry.abandoned = true;
+        console.log(
+          `MFB ~ accept sweeper ~ giving up on #${order.order_id} after ${Math.round(age)} min ` +
+            `(${entry.reminders} reminder(s) sent). It needs a human.`
+        );
+      }
       continue;
     }
 

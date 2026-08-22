@@ -61,16 +61,34 @@ services:
       # HTTPS API is faster besides. SMTP stays wired for your own server.
       - { key: EMAIL_TRANSPORT,        value: api }
       - { key: MSGPROVIDER,            value: twilio }
+      # SMS/WhatsApp is reserved for two things: the login OTP (Twilio Verify,
+      # a separate product) and the delivery handover code. That code has to
+      # arrive at the door on a phone that may have the app closed, so it stays
+      # on SMS — it is the one alert push cannot replace.
       - { key: CUSTOMER_ALERT_CHANNELS, value: sms }
-      - { key: VENDOR_ALERT_CHANNELS,  value: sms }
+      # Empty: the vendor new-order text, every chase reminder and the admin
+      # escalation SMS are all off. Vendors get the order email and the ringing
+      # panel bell; admins get a panel notification.
+      - { key: VENDOR_ALERT_CHANNELS,  value: "" }
+      # Order escalations (vendor sitting on an order, auto-cancel) go to the
+      # panel bell. Add email/sms here to bring the old behaviour back.
+      - { key: ORDER_ESCALATION_CHANNELS, value: panel }
       # New rider application -> admin staff. "panel" is the free, local
       # channel; add email/sms once ADMIN_ALERT_PHONES and RIDER_ALERT_EMAILS
       # are set and the Twilio account is active again.
       - { key: RIDER_ALERT_CHANNELS,   value: panel }
       # Approval / rejection -> the rider. The in-app notification is separate
       # and always sent; these are the off-app copies.
-      - { key: RIDER_DECISION_CHANNELS, value: "email,sms" }
+      # Empty: a rider learns the outcome from the in-app notification, which
+      # is always sent. Most riders have no real email address anyway.
+      - { key: RIDER_DECISION_CHANNELS, value: "" }
       - { key: AUTO_MIGRATE,           value: "true" }
-      - { key: OTP_DEV_MODE,           value: "false" }
+      # TEMPORARY — Twilio credit is exhausted, so no real OTP can be sent.
+      # With this on, every login, registration and password reset accepts
+      # OTP_DEV_CODE and NOTHING is sent to the provider. The order handover
+      # code accepts it too (util/otp.js isDevCode).
+      # SET THIS BACK TO "false" once Twilio is topped up.
+      - { key: OTP_DEV_MODE,           value: "true" }
+      - { key: OTP_DEV_CODE,           value: "123456" }
       # Leave OTP_DEV_NUMBERS UNSET in production.
       # The startup log names it if it is set.

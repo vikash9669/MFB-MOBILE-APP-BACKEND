@@ -61,7 +61,23 @@ const verifyOtp = async (phoneNumber, requestId, otp) => {
   return activeProvider().verifyOtp(phoneNumber, requestId, otp);
 };
 
+/**
+ * True when the app is in full dev-bypass mode AND this is the dev code.
+ *
+ * For the order handover codes (pickup_otp / drop_otp), which are NOT login
+ * OTPs: they are random digits generated per order and texted to the customer,
+ * so when the SMS provider is unavailable nobody can ever produce one and no
+ * delivery can be completed. This lets OTP_DEV_CODE stand in for them.
+ *
+ * Keyed on OTP_DEV_MODE alone, deliberately — not on the OTP_DEV_NUMBERS
+ * whitelist, which is about specific login numbers. With OTP_DEV_MODE=false,
+ * which is what production runs, this is inert and the real code is the only
+ * one accepted.
+ */
+const isDevCode = (otp) => isDevMode() && String(otp ?? "") === DEV_OTP_CODE();
+
 module.exports = {
   initiateOtp,
   verifyOtp,
+  isDevCode,
 };

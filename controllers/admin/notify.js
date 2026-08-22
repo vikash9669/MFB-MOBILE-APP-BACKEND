@@ -8,9 +8,14 @@ const { sendMail, mailFrom, mailConfigured, recipientList } = require("../../uti
 const { StoreOrders, StoreOrderDetails, User, Business } = require("../../models");
 const {
   alertVendorNewOrder,
-  alertAdminVendorUnresponsive,
-  alertAdminAutoCancelled,
 } = require("../../util/vendorAlerts");
+// Escalations now go to the panel first — a durable notification row plus a
+// live event — with email and SMS behind ORDER_ESCALATION_CHANNELS rather
+// than fired unconditionally. See util/adminNotify.js.
+const {
+  notifyAdminsOrderStuck,
+  notifyAdminsOrderCancelled,
+} = require("../../util/adminNotify");
 
 const STORE = process.env.STORE_NAME || "My First Bite";
 // The address readers are told to write to. Not EMAIL_USER: on SendGrid that
@@ -266,59 +271,27 @@ async function escalateUnaccepted(orderId, minutesWaiting, cancelAfterMin = 0) {
   if (order == null) return null;
   if (Number(order.order_status) !== 0) return { skipped: "already accepted" };
 
-  const [vendorUser, business, admins] = await Promise.all([
+  const [vendorUser, business] = await Promise.all([
     order.vendor_id ? User.findByPk(order.vendor_id, { raw: true }) : null,
     order.vendor_id
       ? Business.findOne({ where: { user_id: order.vendor_id }, raw: true })
       : null,
-    User.findAll({
-      where: { user_role: ADMIN_ROLES },
-      attributes: ["user_email"],
-      raw: true,
-    }),
   ]);
 
   const shop = business?.business_name || vendorUser?.user_name || "the vendor";
   const minutesUntilCancel = Math.max(0, Number(cancelAfterMin || 0) - Number(minutesWaiting));
 
-  const plural = minutesUntilCancel === 1 ? "" : "s";
-  const deadlineHtml =
-    minutesUntilCancel > 0
-      ? `<p style="color:#b00020"><strong>This order auto-cancels in
-           ${minutesUntilCancel} minute${plural}</strong>, and any online payment
-           is refunded automatically.</p>`
-      : "";
-
-  // Email and WhatsApp together: email carries the detail, WhatsApp is what
-  // actually gets looked at inside the cancellation window.
-  const [mail, whatsapp] = await Promise.all([
-    send(
-      alertRecipients(admins).join(", "),
-      `⚠️ Order #${orderId} not accepted after ${minutesWaiting} minutes`,
-      shell(
-        orderId,
-        "team",
-        `<p><strong>${shop}</strong> has not accepted order #${orderId}, ${minutesWaiting}
-           minutes after it was placed.</p>
-         <p>They have already had the dashboard alert, an email and every reminder
-           we send. The customer is still waiting — someone needs to call the shop
-           or move this order elsewhere.</p>
-         ${deadlineHtml}
-         ${vendorUser?.user_phone ? `<p>Vendor phone: ${vendorUser.user_phone}</p>` : ""}
-         ${button(adminOrderUrl(orderId), "Open order in admin panel")}`
-      )
-    ),
-    alertAdminVendorUnresponsive({
-      orderId,
-      shop,
-      vendorPhone: vendorUser?.user_phone,
-      minutesWaiting,
-      minutesUntilCancel,
-      orderUrl: adminOrderUrl(orderId),
-    }).catch((err) => ({ sent: false, reason: err.message })),
-  ]);
-
-  return { mail, whatsapp };
+  // One fan-out, channel-gated: a durable panel notification and a live event
+  // by default, email and SMS only when ORDER_ESCALATION_CHANNELS asks for
+  // them. Recipients and message bodies are resolved inside adminNotify, which
+  // is why the admin lookup that used to sit here is gone.
+  return notifyAdminsOrderStuck({
+    orderId,
+    shop,
+    minutesWaiting,
+    minutesUntilCancel,
+    vendorPhone: vendorUser?.user_phone,
+  });
 }
 
 /**
@@ -330,54 +303,19 @@ async function notifyOrderAutoCancelled(orderId, { refunded, amount }) {
   const order = await StoreOrders.findByPk(orderId, { raw: true });
   if (order == null) return null;
 
-  const [vendorUser, business, admins] = await Promise.all([
+  const [vendorUser, business] = await Promise.all([
     order.vendor_id ? User.findByPk(order.vendor_id, { raw: true }) : null,
     order.vendor_id
       ? Business.findOne({ where: { user_id: order.vendor_id }, raw: true })
       : null,
-    User.findAll({
-      where: { user_role: ADMIN_ROLES },
-      attributes: ["user_email"],
-      raw: true,
-    }),
   ]);
 
   const shop = business?.business_name || vendorUser?.user_name || "the vendor";
 
-  let money = "<p>This was a cash order, so there is nothing to refund.</p>";
-  if (refunded === true) {
-    money = `<p>₹${amount} has been submitted to PhonePe as a refund. It usually
-               reaches the customer in 3–5 working days.</p>`;
-  } else if (refunded === false) {
-    money = `<p style="color:#b00020"><strong>₹${amount} was paid online and the
-               refund did not go through.</strong> This one needs refunding by
-               hand from the PhonePe dashboard.</p>`;
-  }
-
-  const [mail, whatsapp] = await Promise.all([
-    send(
-      alertRecipients(admins).join(", "),
-      `❌ Order #${orderId} auto-cancelled — ${shop} never accepted it`,
-      shell(
-        orderId,
-        "team",
-        `<p>Order #${orderId} was cancelled automatically because <strong>${shop}</strong>
-           did not accept it inside the acceptance window.</p>
-         ${money}
-         <p>The customer has been notified in the app.</p>
-         ${button(adminOrderUrl(orderId), "Open order in admin panel")}`
-      )
-    ),
-    alertAdminAutoCancelled({
-      orderId,
-      shop,
-      refunded,
-      amount,
-      orderUrl: adminOrderUrl(orderId),
-    }).catch((err) => ({ sent: false, reason: err.message })),
-  ]);
-
-  return { mail, whatsapp };
+  // Channel-gated, same as the escalation above. adminNotify renders the
+  // wording for each channel, including the failed-refund case, which is the
+  // one a human has to act on.
+  return notifyAdminsOrderCancelled({ orderId, shop, refunded, amount });
 }
 
 exports.notifyOrderReceived = notifyOrderReceived;

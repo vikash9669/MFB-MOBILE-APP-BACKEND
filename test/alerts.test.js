@@ -231,3 +231,56 @@ test("a partner object full of nulls does not throw", async () => {
     assert.ok(!result.error, `threw internally: ${result.error}`);
   });
 });
+
+// ── Order escalation channels ──────────────────────────────────────
+
+test("order escalations default to the panel, not email or SMS", async () => {
+  await withEnv({ ORDER_ESCALATION_CHANNELS: undefined }, () => {
+    const c = adminNotify._escalationChannels();
+    assert.ok(c.has("panel"));
+    assert.ok(c.has("realtime"), "panel must imply the live event");
+    assert.ok(!c.has("email"));
+    assert.ok(!c.has("sms"));
+  });
+});
+
+test("the old email + SMS escalation can be switched back on", async () => {
+  // Gated rather than deleted: a busy period should be an env change, not a
+  // deploy.
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "panel,email,sms" }, () => {
+    const c = adminNotify._escalationChannels();
+    assert.deepStrictEqual([...c].sort(), ["email", "panel", "realtime", "sms"]);
+  });
+});
+
+test("escalation mail uses ORDER_ALERT_EMAILS, not the rider list", async () => {
+  // Two different audiences resolved by the same helper — crossing them would
+  // send rider-application mail to the order desk and vice versa.
+  await withEnv(
+    { ORDER_ALERT_EMAILS: "orders@myfirstbite.in", RIDER_ALERT_EMAILS: "riders@myfirstbite.in" },
+    () => {
+      assert.deepStrictEqual(adminNotify._mailRecipients([], "ORDER_ALERT_EMAILS"), [
+        "orders@myfirstbite.in",
+      ]);
+      assert.deepStrictEqual(adminNotify._mailRecipients([], "RIDER_ALERT_EMAILS"), [
+        "riders@myfirstbite.in",
+      ]);
+    }
+  );
+});
+
+test("order escalations never throw, whatever the transports do", async () => {
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "none" }, async () => {
+    const stuck = await adminNotify.notifyAdminsOrderStuck({
+      orderId: 1, shop: "Test Kitchen", minutesWaiting: 7, minutesUntilCancel: 3,
+    });
+    const cancelled = await adminNotify.notifyAdminsOrderCancelled({
+      orderId: 1, shop: "Test Kitchen", refunded: false, amount: 250,
+    });
+    for (const r of [stuck, cancelled]) {
+      assert.ok(!r.error, `threw internally: ${r.error}`);
+      assert.strictEqual(r.panel, 0);
+      assert.strictEqual(r.realtime, 0);
+    }
+  });
+});
