@@ -7,7 +7,7 @@ process.env.ORDER_ACCEPT_REMINDER_EVERY_MIN = "1";
 process.env.ORDER_ACCEPT_GIVE_UP_MIN = "5";
 process.env.ORDER_ACCEPT_ESCALATE_MIN = "999"; // out of the way for this test
 process.env.ORDER_AUTO_CANCEL = "false";
-process.env.VENDOR_ALERT_CHANNELS = ""; // no channel enabled: no network calls
+process.env.VENDOR_ALERT_CHANNELS = "none"; // no channel enabled: no network calls
 
 const { StoreOrders, User, Business } = require("../models");
 const { sweepOnce } = require("../util/orderAcceptSweeper");

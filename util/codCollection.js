@@ -25,8 +25,7 @@ const { QueryTypes } = require("sequelize");
 const sequelize = require("./database");
 const crypto = require("node:crypto");
 const { PaymentIntent, DeliveryOrder, StoreOrders } = require("../models");
-const phonepe = require("./phonepe");
-const dqr = require("./phonepeDqr");
+const gateway = require("./gateway");
 const origins = require("./origins");
 const { collectionReady } = require("./collectionColumns");
 const { notifyUser } = require("./customerNotify");
@@ -79,7 +78,7 @@ async function startCollection({ doId, dpId }) {
   if (!(await collectionReady())) {
     return { ok: false, reason: "not_migrated" };
   }
-  if (!phonepe.isConfigured()) {
+  if (!gateway.isConfigured()) {
     return { ok: false, reason: "Online payment is not configured" };
   }
 
@@ -120,49 +119,61 @@ async function startCollection({ doId, dpId }) {
 
   const merchantTxnId = newTxnId(doId);
 
-  // Prefer a real UPI QR. PhonePe's offline Dynamic QR product returns a
-  // `upi://pay?pa=…&am=…` string, so the customer's camera takes them straight
-  // to a confirm screen with the amount already filled in. The PG product
-  // cannot do this: every one of its flows — including the ones named UPI_QR
-  // and UPI_INTENT — returns a hosted checkout URL, and a QR of a URL just
-  // opens a web page. See util/phonepeDqr.js.
+  // Prefer a real UPI QR: a `upi://pay?pa=…&am=…` string sends the customer's
+  // camera straight to a confirm screen with the amount already filled in.
   //
-  // Falls back to that hosted URL when DQR credentials are absent, which keeps
-  // doorstep collection working (if clumsily) on a merchant that only has the
-  // online product.
-  let payload;
+  // Whether that is available depends on the provider and on what the merchant
+  // account has been granted, which is why it is asked of the gateway rather
+  // than decided here. On PhonePe it needs the separate offline Dynamic QR
+  // product; on Cashfree it needs the S2S flag. Neither is guaranteed.
+  //
+  // Falls back to an ordinary checkout link, which encodes into a QR that opens
+  // a web page. Clumsier, but a doorstep is the wrong place to fail outright.
+  let payload = null;
   let isUpiQr = false;
-  if (dqr.isConfigured()) {
+
+  if (gateway.qrConfigured()) {
     try {
-      const qr = await dqr.createQr({
-        merchantTxnId,
+      const qr = await gateway.createUpiQr({
+        merchantOrderId: merchantTxnId,
         amountInRupees: amount,
+        userId: job.dp_id,
         expiresInSec: TTL_SEC,
-        merchantOrderId: job.source_order_id ?? undefined,
+        sourceOrderId: job.source_order_id ?? undefined,
       });
-      payload = qr.qrString;
-      isUpiQr = true;
+      // Only a raw upi:// string is usable here: collect_url is a URL column
+      // and the rider's screen renders a QR from that string. A provider that
+      // can only return a rendered image is treated as "no QR available" and
+      // falls through to the checkout link below, rather than half-working.
+      if (qr?.qrString) {
+        payload = qr.qrString;
+        isUpiQr = true;
+      }
     } catch (err) {
-      // A doorstep is the wrong place to fail outright, so drop to the hosted
-      // checkout rather than leaving the rider with nothing to show.
-      console.log("MFB ~ collection ~ dynamic QR unavailable, using hosted checkout ~", err.message);
+      console.log("MFB ~ collection ~ UPI QR unavailable, using checkout link ~", err.message);
     }
   }
 
   if (payload == null) {
-    const hosted = await phonepe.createHostedCheckout({
+    const hosted = await gateway.createHostedCheckout({
       merchantOrderId: merchantTxnId,
       amountInRupees: amount,
       userId: job.dp_id,
-      // Where PhonePe sends the CUSTOMER'S browser after paying. They are on
-      // their own phone, not the rider's, so this points at the storefront's
+      // Where the provider sends the CUSTOMER'S browser after paying. They are
+      // on their own phone, not the rider's, so this points at the storefront's
       // return page rather than anything in the delivery app.
+      //
       // No browser request here to read an Origin from, so this one is
       // configuration-only — but it falls back to the CORS allowlist rather
       // than a bare localhost literal.
       redirectUrl: `${origins.webBase(null)}/payment/return?txn=${encodeURIComponent(merchantTxnId)}`,
     });
-    payload = hosted.redirectUrl;
+    // PhonePe returns a URL to navigate to. Cashfree returns a session id, and
+    // the customer-facing page that consumes it lives on the storefront, so the
+    // QR encodes that page rather than an API response.
+    payload =
+      hosted.redirectUrl ??
+      `${origins.webBase(null)}/pay/${encodeURIComponent(hosted.sessionId ?? merchantTxnId)}`;
   }
 
   const order = await StoreOrders.findByPk(job.source_order_id, { raw: true });
@@ -293,10 +304,10 @@ const isUpiPayload = (s) => /^upi:\/\//i.test(String(s || ""));
  * payload records which was used, so it decides.
  */
 async function statusFor(intent) {
-  if (isUpiPayload(intent.collect_url) && dqr.isConfigured()) {
-    return dqr.fetchQrStatus(intent.merchant_txn_id);
+  if (isUpiPayload(intent.collect_url) && gateway.qrConfigured()) {
+    return gateway.qrFetchStatus(intent.merchant_txn_id);
   }
-  return phonepe.fetchStatus(intent.merchant_txn_id);
+  return gateway.fetchStatus(intent.merchant_txn_id);
 }
 
 // dpId is accepted so callers can pass the whole job object, but the lookup

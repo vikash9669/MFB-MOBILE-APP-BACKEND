@@ -1,4 +1,4 @@
-const { Op } = require("sequelize");
+const { Op, literal } = require("sequelize");
 const {
   DeliveryOrder,
   DeliveryOrderEvent,
@@ -110,6 +110,27 @@ exports.getIncoming = async (req, res) => {
     if (passedIds.length > 0) {
       where.do_id = { [Op.notIn]: passedIds };
     }
+
+    // Never offer a job whose order has been cancelled.
+    //
+    // util/orderLifecycle.js retracts the job when it cancels an order, so in
+    // the normal path this changes nothing. It exists because that is not the
+    // only path: the legacy PHP admin panel writes store_orders.order_status
+    // directly and never calls cancelOrder, and so does anyone editing the
+    // database by hand. Filtering on the job's own status alone therefore left
+    // cancelled orders sitting in the pool indefinitely, claimable by a rider
+    // who would ride to a restaurant for an order that no longer exists.
+    //
+    // A correlated NOT EXISTS rather than NOT IN: there are tens of thousands of
+    // cancelled orders, and this way each candidate costs one primary-key
+    // lookup instead of materialising that whole set.
+    where[Op.and] = [
+      literal(
+        "NOT EXISTS (SELECT 1 FROM `store_orders` `o` " +
+          "WHERE `o`.`order_id` = `delivery_order`.`source_order_id` " +
+          "AND `o`.`order_status` = 6)"
+      ),
+    ];
 
     const rider =
       partner.dp_lat != null && partner.dp_lng != null

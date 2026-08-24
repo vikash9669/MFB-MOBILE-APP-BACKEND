@@ -25,6 +25,15 @@ const list = () =>
 
 const allows = (origin) => Boolean(origin) && list().includes(trimTrailingSlashes(origin));
 
+/** The first origin in a value that should hold exactly one. See webBase. */
+const firstOrigin = (raw) => {
+  const first = String(raw || "")
+    .split(",")
+    .map((o) => trimTrailingSlashes(o.trim()))
+    .filter(Boolean)[0];
+  return first || "";
+};
+
 // Origins we have already complained about, so a misconfigured front end logs
 // once rather than on every request.
 //
@@ -63,10 +72,19 @@ function webBase(req) {
   const origin = req && req.headers && req.headers.origin;
   if (allows(origin)) return trimTrailingSlashes(origin);
 
-  const configured = process.env.STOREFRONT_URL || process.env.PANEL_URL || "";
-  if (configured) return trimTrailingSlashes(configured);
+  // STOREFRONT_URL / PANEL_URL are single origins, but they sit one line away
+  // from ADMIN_PANEL_ORIGINS, which is a comma-separated LIST — and the list
+  // has been pasted into them by mistake. That produced a "base" of
+  // "https://a.example,http://localhost:5173", so every link built from it
+  // ("<base>/payment/return?txn=…") was not a URL at all: dead doorstep QRs and
+  // dead payment-return links, with nothing logging a complaint.
+  //
+  // So take the first entry if a list arrives. One origin is what this returns
+  // by contract, and the first is the one a human would have meant.
+  const configured = firstOrigin(process.env.STOREFRONT_URL || process.env.PANEL_URL || "");
+  if (configured) return configured;
 
   return list()[0] || "http://localhost:5173";
 }
 
-module.exports = { list, allows, webBase, noteRejected };
+module.exports = { list, allows, webBase, noteRejected, firstOrigin };

@@ -1,6 +1,7 @@
 const crypto = require("crypto");
-const { PaymentIntent } = require("../models");
-const phonepe = require("../util/phonepe");
+const { PaymentIntent, User } = require("../models");
+// One interface, whichever provider is configured — see util/gateway.js.
+const gateway = require("../util/gateway");
 const origins = require("../util/origins");
 const { priceCart, findOrderById } = require("../util/orders");
 // Order creation from a paid intent lives in one place, shared with the
@@ -11,10 +12,30 @@ const {
   settleCollection,
   statusFor,
 } = require("../util/codCollection");
-const dqr = require("../util/phonepeDqr");
 
 const ONLINE_METHODS = ["UPI", "CARD"];
 
+
+// Cashfree requires a customer id and a 10-digit phone on every order;
+// PhonePe wants neither. Looked up once here and passed to whichever driver is
+// active, which ignores what it does not need. Never allowed to fail a
+// checkout — the drivers substitute a placeholder if this comes back empty.
+const customerFor = async (user_id) => {
+  try {
+    const u = await User.findByPk(user_id, {
+      attributes: ["user_name", "user_phone", "user_email"],
+    });
+    return {
+      id: user_id,
+      phone: u?.user_phone ?? null,
+      name: u?.user_name ?? null,
+      email: u?.user_email ?? null,
+    };
+  } catch (err) {
+    console.log("MFB ~ payment ~ customer lookup ~", err.message);
+    return { id: user_id };
+  }
+};
 
 const newMerchantTxnId = (user_id) =>
   // Bounded to PhonePe's 38-char limit for merchantTransactionId.
@@ -40,10 +61,11 @@ const initiatePayment = async (req, res) => {
       .json({ message: `Unsupported payment method: ${method}` });
   }
 
-  if (!phonepe.isConfigured()) {
+  if (!gateway.isConfigured()) {
     return res.status(503).json({
       message:
-        "Online payment is not configured. Set PHONEPE_CLIENT_ID / PHONEPE_CLIENT_SECRET (and PHONEPE_MERCHANT_ID) in the backend .env.",
+        `Online payment is not configured for provider "${gateway.name}". ` +
+        "Set the matching CLIENT_ID / CLIENT_SECRET in the backend .env.",
     });
   }
 
@@ -103,38 +125,52 @@ const initiatePayment = async (req, res) => {
         merchantTransactionId
       )}`;
 
-      const hosted = await phonepe.createHostedCheckout({
+      const hosted = await gateway.createHostedCheckout({
         merchantOrderId: merchantTransactionId,
         amountInRupees: pricing.payable,
         userId: user_id,
+        customer: await customerFor(user_id),
         redirectUrl,
+        notifyUrl: `${process.env.PUBLIC_API_URL || ""}/payment/callback`,
       });
 
       return res.status(201).json({
         merchant_txn_id: merchantTransactionId,
         amount: pricing.payable,
-        // The browser is sent here; there is no token to hand a native SDK.
-        redirect_url: hosted.redirectUrl,
+        // The two providers hand a browser off differently, and the storefront
+        // branches on `provider` rather than guessing: PhonePe issues a URL to
+        // navigate to, Cashfree issues a session its JS SDK consumes in place.
+        provider: gateway.name,
+        redirect_url: hosted.redirectUrl ?? null,
+        payment_session_id: hosted.sessionId ?? null,
+        environment: gateway.config().sdk,
         flow: "web",
       });
     }
 
-    const { orderId, token } = await phonepe.createSdkOrder({
+    const { orderId, token, sessionId } = await gateway.createSdkOrder({
       merchantOrderId: merchantTransactionId,
       amountInRupees: pricing.payable,
       userId: user_id,
+      customer: await customerFor(user_id),
+      notifyUrl: `${process.env.PUBLIC_API_URL || ""}/payment/callback`,
     });
 
-    const cfg = phonepe.config();
+    const cfg = gateway.config();
 
     res.status(201).json({
       merchant_txn_id: merchantTransactionId,
       amount: pricing.payable,
-      // Everything below is fed straight into the SDK by the app.
+      // Everything below is fed straight into the SDK by the app. Which fields
+      // matter depends on the provider, so all of them are sent and the app
+      // picks by `provider`: PhonePe needs order_id + token + merchant_id,
+      // Cashfree needs order_id + payment_session_id.
+      provider: gateway.name,
       order_id: orderId,
       token,
+      payment_session_id: sessionId ?? null,
       merchant_id: cfg.merchantId,
-      // "SANDBOX" | "PRODUCTION" — the value PhonePePaymentSDK.init() wants.
+      // "SANDBOX" | "PRODUCTION" — what both SDKs' init/enum expect.
       environment: cfg.sdk,
       flow: "sdk",
     });
@@ -174,7 +210,7 @@ const confirmPayment = async (req, res) => {
       return res.status(200).json({ status: "PAID", order });
     }
 
-    const status = await phonepe.fetchStatus(merchant_txn_id);
+    const status = await gateway.fetchStatus(merchant_txn_id);
 
     if (status.pending) {
       return res
@@ -204,36 +240,29 @@ const confirmPayment = async (req, res) => {
   }
 };
 
-// POST /payment/phonepe/callback
+// POST /payment/callback  (also /payment/phonepe/callback)
 // PhonePe's server-to-server notification. There is no JWT here — trust comes
 // from the dashboard-configured Authorization credential (v2 webhook auth).
-const phonepeCallback = async (req, res) => {
+const paymentCallback = async (req, res) => {
   try {
-    if (!phonepe.verifyCallbackAuth(req.headers.authorization)) {
-      console.warn("MFB ~ phonepeCallback: bad or missing authorization");
+    if (!gateway.verifyCallbackAuth(req)) {
+      console.warn(`MFB ~ paymentCallback (${gateway.name}): bad or missing signature`);
       return res.status(401).json({ message: "Invalid signature" });
     }
 
-    // v2 body is nominally { event | type, payload: { merchantOrderId, state } },
-    // but the id has shown up as merchantTransactionId and at the top level
-    // depending on the event, and an unrecognised shape used to throw a
-    // Sequelize "invalid undefined value" on every single callback. Accept the
-    // known spellings and bail cleanly on anything else.
-    const body = req.body || {};
-    const payload = body.payload || body.data || {};
-    const merchantOrderId =
-      payload.merchantOrderId ||
-      payload.merchantTransactionId ||
-      body.merchantOrderId ||
-      body.merchantTransactionId ||
-      null;
-    const state = payload.state || payload.status || body.state;
+    // Body shapes differ per provider and have drifted between versions, so
+    // each driver pulls out our order id and the reported state itself. A shape
+    // nobody recognises returns null rather than throwing — an unparseable
+    // callback used to blow up on every single delivery.
+    const parsed = gateway.parseCallback(req);
+    const merchantOrderId = parsed?.merchantOrderId ?? null;
+    const state = parsed?.state ?? null;
 
     if (!merchantOrderId) {
+      // Keys only — a webhook body can carry payer details.
       console.warn(
-        "MFB ~ phonepeCallback: no merchant order id in payload; keys =",
-        // Keys only — a webhook body can carry payer details.
-        `body:[${Object.keys(body)}] payload:[${Object.keys(payload)}]`
+        `MFB ~ paymentCallback (${gateway.name}): no order id in payload; keys =`,
+        `[${Object.keys(req.body || {})}]`
       );
       return res.status(200).json({ ok: true });
     }
@@ -268,7 +297,7 @@ const phonepeCallback = async (req, res) => {
 
     // Re-verify against the status API rather than trusting the webhook body,
     // so a replayed or malformed payload cannot mark an order paid.
-    const status = await phonepe.fetchStatus(merchantOrderId);
+    const status = await gateway.fetchStatus(merchantOrderId);
 
     if (status.success && intent.status !== "PAID") {
       await settleIntent(intent, status.providerTxnId);
@@ -281,12 +310,12 @@ const phonepeCallback = async (req, res) => {
 
     res.status(200).json({ ok: true });
   } catch (error) {
-    console.error("MFB-error-logs ~ phonepeCallback:", error);
+    console.error("MFB-error-logs ~ paymentCallback:", error);
     res.status(200).json({ ok: true });
   }
 };
 
-// POST /payment/phonepe/qr-callback
+// POST /payment/qr-callback  (also /payment/phonepe/qr-callback)
 //
 // The offline Dynamic QR product's server-to-server notification. It is a
 // separate endpoint from phonepeCallback because the two products authenticate
@@ -296,21 +325,19 @@ const phonepeCallback = async (req, res) => {
 // product, which is a downgrade for both.
 //
 // Body is { response: "<base64 json>" }.
-const phonepeQrCallback = async (req, res) => {
+const qrCallback = async (req, res) => {
   try {
-    const bodyBase64 = req.body?.response || req.body?.request;
-    if (!dqr.verifyCallback(bodyBase64, req.headers["x-verify"])) {
-      console.warn("MFB ~ phonepeQrCallback: bad or missing X-VERIFY");
+    if (!gateway.verifyQrCallback(req)) {
+      console.warn(`MFB ~ qrCallback (${gateway.name}): bad or missing signature`);
       return res.status(401).json({ message: "Invalid signature" });
     }
 
-    const decoded = dqr.decodeCallback(bodyBase64);
-    const txnId = decoded?.data?.transactionId || decoded?.data?.merchantTransactionId;
+    const txnId = gateway.parseQrCallback(req)?.merchantOrderId ?? null;
     if (!txnId) {
       // Keys only — a callback body carries payer details.
       console.warn(
-        "MFB ~ phonepeQrCallback: no transaction id; keys =",
-        `[${Object.keys(decoded?.data ?? {})}]`
+        `MFB ~ qrCallback (${gateway.name}): no transaction id; keys =`,
+        `[${Object.keys(req.body || {})}]`
       );
       return res.status(200).json({ ok: true });
     }
@@ -333,10 +360,10 @@ const phonepeQrCallback = async (req, res) => {
 
     res.status(200).json({ ok: true });
   } catch (error) {
-    console.error("MFB-error-logs ~ phonepeQrCallback:", error.message);
+    console.error("MFB-error-logs ~ qrCallback:", error.message);
     // 200 regardless, so PhonePe stops retrying a message we have accepted.
     res.status(200).json({ ok: true });
   }
 };
 
-module.exports = { initiatePayment, confirmPayment, phonepeCallback, phonepeQrCallback };
+module.exports = { initiatePayment, confirmPayment, paymentCallback, qrCallback };

@@ -19,7 +19,7 @@
 // produces exactly one order.
 const { Op } = require("sequelize");
 const { PaymentIntent } = require("../models");
-const phonepe = require("./phonepe");
+const gateway = require("./gateway");
 const { settleIntent } = require("./paymentSettlement");
 const {
   pendingCollections,
@@ -48,7 +48,7 @@ const minsAgo = (n) => new Date(Date.now() - n * 60000);
  * is watching.
  */
 async function sweepOnce() {
-  if (!phonepe.isConfigured()) {
+  if (!gateway.isConfigured()) {
     return { skipped: "not_configured", settled: [], failed: [], checked: 0 };
   }
 
@@ -74,7 +74,7 @@ async function sweepOnce() {
   try {
     const collections = await pendingCollections(BATCH);
     for (const intent of collections) {
-      // statusFor, not phonepe.fetchStatus: a doorstep QR may have been raised
+      // statusFor, not gateway.fetchStatus: a doorstep QR may have been raised
       // through the offline Dynamic QR product, whose transactions the PG
       // status API cannot see at all.
       const status = await statusFor(intent);
@@ -95,7 +95,7 @@ async function sweepOnce() {
       if (await loadCollectionIntent(intent.merchant_txn_id)) {
         continue;
       }
-      const status = await phonepe.fetchStatus(intent.merchant_txn_id);
+      const status = await gateway.fetchStatus(intent.merchant_txn_id);
 
       if (status.success) {
         const { order_id, alreadySettled } = await settleIntent(

@@ -12,6 +12,7 @@
 const os = require("os");
 const { transportName } = require("./email");
 const origins = require("./origins");
+const gateway = require("./gateway");
 
 const P = "MFB ~ ";
 const line = (s = "") => console.log(P + s);
@@ -111,6 +112,17 @@ function reportBoot({ dbName, dbHost, dbPort, timezone, schema }) {
   // this list fails with an empty page and no server-side error, so the list
   // is worth stating plainly at boot rather than inferring it from a bug report.
   line(`cors       ${origins.list().join(", ") || "(none)"}`);
+  // Which gateway is taking money, and whether it can. Switching provider is a
+  // single env var, so the boot log is the fastest way to confirm the process
+  // agrees with what the dashboard was configured for.
+  {
+    const g = gateway.config();
+    line(
+      `payments   ${gateway.name} ${g.env} — ` +
+        `${gateway.isConfigured() ? yes : no}` +
+        `${gateway.qrConfigured() ? ", doorstep QR on" : ", doorstep QR off"}`
+    );
+  }
   rule();
   line("integrations");
   for (const [name, ok, detail] of integrations()) {

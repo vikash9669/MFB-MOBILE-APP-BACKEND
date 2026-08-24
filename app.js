@@ -45,7 +45,20 @@ if (process.env.TRUST_PROXY) {
 // including the 404s that no router claims.
 app.use(requestLog);
 
-app.use(express.json({ limit: "6mb" }));
+// The raw body is kept alongside the parsed one because Cashfree signs the
+// EXACT bytes it sent: HMAC-SHA256 over (x-webhook-timestamp + raw body). Once
+// express.json() has parsed and re-serialised, key order and whitespace are no
+// longer guaranteed, and the signature can never be reproduced. `verify` is the
+// documented hook for this and runs for every JSON body, so the webhook route
+// needs no special mounting.
+app.use(
+  express.json({
+    limit: "6mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf && buf.length ? buf.toString("utf8") : "";
+    },
+  })
+);
 
 // CORS for the web app — MFB-ADMIN-PANEL (:5173), which serves the customer
 // storefront at / and the staff portals at /admin, /vendor and /rider from one

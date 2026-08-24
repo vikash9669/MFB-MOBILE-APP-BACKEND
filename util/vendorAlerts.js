@@ -39,7 +39,7 @@ const voiceFrom = () => process.env.TWILIO_VOICE_FROM || "";
  */
 const enabledChannels = () =>
   new Set(
-    String(process.env.VENDOR_ALERT_CHANNELS || "")
+    String(process.env.VENDOR_ALERT_CHANNELS || "none")
       .split(",")
       .map((c) => c.trim().toLowerCase())
       .filter(Boolean)

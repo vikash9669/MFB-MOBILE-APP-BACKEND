@@ -17,9 +17,10 @@
 const sequelize = require("./database");
 const { QueryTypes } = require("sequelize");
 const { PaymentIntent } = require("../models");
-const phonepe = require("./phonepe");
+const gateway = require("./gateway");
 const { ordersReady, refundsReady } = require("./lifecycleColumns");
 const { notifyUser } = require("./customerNotify");
+const { notifyPartner } = require("./deliveryNotify");
 
 const RECEIVED = 0;
 const PROCESSED = 1;
@@ -171,6 +172,12 @@ async function cancelOrder({ orderId, reason, by = "vendor", actorId = null }) {
   }
 
   const order = await readOrder(orderId);
+
+  // Take the job out of the rider pool before anything else. The refund and the
+  // customer push can both take a while, and every second this stays `offered`
+  // is a second a rider can claim an order that no longer exists.
+  const retraction = await retractDeliveryJob(orderId, reason);
+
   const refund = await refundOrderPayment(order, reason);
 
   const paidOnline = String(order?.order_payment_type).toUpperCase() === "PG";
@@ -194,7 +201,73 @@ async function cancelOrder({ orderId, reason, by = "vendor", actorId = null }) {
     refOrderId: orderId,
   }).catch((e) => console.log("MFB ~ lifecycle ~ cancel notify ~", e.message));
 
-  return { ok: true, orderId, status: CANCELLED, by, refund };
+  return { ok: true, orderId, status: CANCELLED, by, refund, retraction };
+}
+
+/**
+ * Retracts the delivery job behind a cancelled order.
+ *
+ * A job is queued the moment an order is placed, so by the time a vendor
+ * declines — or the sweeper times the order out — that job is already sitting
+ * in the rider pool marked `offered`, and may even have been claimed. Nothing
+ * used to take it back: cancelOrder only touched store_orders, and the offer
+ * list filters on the JOB's status without ever looking at the order's. A rider
+ * could therefore accept an order that no longer existed, ride to the
+ * restaurant, and find nothing waiting — while the customer had already been
+ * refunded.
+ *
+ * Only `offered` and `accepted` are retracted. `picked_up` and `delivered` mean
+ * food is already in a bag and in motion; cancelling the job then would strand
+ * a rider holding an order with no record of why they are holding it. Those
+ * states cannot be reached from RECEIVED anyway, which is the only status
+ * cancelOrder transitions out of, so the guard is belt and braces.
+ *
+ * Never throws. A cancellation that could not retract its job must still leave
+ * the order cancelled and the customer refunded — the offers query carries a
+ * second, independent guard for exactly this case.
+ */
+async function retractDeliveryJob(orderId, reason) {
+  try {
+    const jobs = await sequelize.query(
+      `SELECT \`do_id\`, \`dp_id\`, \`status\` FROM \`store_delivery_orders\`
+        WHERE \`source_order_id\` = :orderId AND \`status\` IN ('offered', 'accepted')`,
+      { replacements: { orderId }, type: QueryTypes.SELECT }
+    );
+
+    if (jobs.length === 0) return { retracted: 0 };
+
+    const [, affected] = await sequelize.query(
+      `UPDATE \`store_delivery_orders\` SET \`status\` = 'cancelled'
+        WHERE \`source_order_id\` = :orderId AND \`status\` IN ('offered', 'accepted')`,
+      { replacements: { orderId }, type: QueryTypes.UPDATE }
+    );
+
+    // A rider who had already claimed it is on their way somewhere pointless.
+    // Best-effort: a push that fails must not undo the retraction.
+    for (const job of jobs) {
+      if (job.dp_id == null) continue;
+      notifyPartner(job.dp_id, {
+        category: "orders",
+        icon: "cancel",
+        title: "Order cancelled",
+        body:
+          `Order #${orderId} was cancelled` +
+          `${reason ? ` — ${String(reason).slice(0, 80)}` : ""}. ` +
+          "You don't need to collect it.",
+        data: { do_id: String(job.do_id), source_order_id: String(orderId) },
+      }).catch((e) =>
+        console.log("MFB ~ lifecycle ~ retract notify ~", e.message)
+      );
+    }
+
+    console.log(
+      `MFB ~ lifecycle ~ retracted ${affected ?? jobs.length} delivery job(s) for #${orderId}`
+    );
+    return { retracted: Number(affected ?? jobs.length) };
+  } catch (err) {
+    console.log("MFB ~ lifecycle ~ retract delivery job ~", err.message);
+    return { retracted: 0, error: err.message };
+  }
 }
 
 /**
@@ -268,7 +341,7 @@ async function refundOrderPayment(order, reason) {
   }
 
   try {
-    const result = await phonepe.refundPayment({
+    const result = await gateway.refundPayment({
       merchantRefundId,
       originalMerchantOrderId: intent.merchant_txn_id,
       amountInRupees: Number(intent.amount),
@@ -278,7 +351,7 @@ async function refundOrderPayment(order, reason) {
       `UPDATE \`store_payment_intents\`
           SET \`refund_status\`      = :state,
               \`provider_refund_id\` = :refundId,
-              \`refunded_at\`        = ${result.state === "COMPLETED" ? "UTC_TIMESTAMP()" : "NULL"},
+              \`refunded_at\`        = ${gateway.isRefundSettled(result.state) ? "UTC_TIMESTAMP()" : "NULL"},
               \`refund_failure\`     = :failure
         WHERE \`pi_id\` = :pid`,
       {
@@ -322,6 +395,7 @@ async function refundOrderPayment(order, reason) {
 }
 
 module.exports = {
+  retractDeliveryJob,
   acceptOrder,
   cancelOrder,
   refundOrderPayment,
