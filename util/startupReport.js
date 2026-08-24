@@ -11,6 +11,7 @@
 // SMTP host, a from-address. Never a key, token or password.
 const os = require("os");
 const { transportName } = require("./email");
+const origins = require("./origins");
 
 const P = "MFB ~ ";
 const line = (s = "") => console.log(P + s);
@@ -106,6 +107,10 @@ function reportBoot({ dbName, dbHost, dbPort, timezone, schema }) {
   line(`env        ${process.env.NODE_ENV || "development"}`);
   line(`database   connected — ${dbName} @ ${dbHost}:${dbPort} (session tz ${timezone})`);
   line(`schema     ${schema}`);
+  // Which browsers may talk to this API. A deployed front end missing from
+  // this list fails with an empty page and no server-side error, so the list
+  // is worth stating plainly at boot rather than inferring it from a bug report.
+  line(`cors       ${origins.list().join(", ") || "(none)"}`);
   rule();
   line("integrations");
   for (const [name, ok, detail] of integrations()) {

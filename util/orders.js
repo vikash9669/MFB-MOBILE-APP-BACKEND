@@ -237,6 +237,21 @@ const runPostOrderSideEffects = async ({ user_id, order_id, total_amount }) => {
     console.error("Failed to raise order notification:", notifyError.message);
   }
 
+  // Make sure the delivery address has coordinates, so the tracking map has a
+  // destination to draw. Addresses created through the app already carry a pin
+  // from the map picker; the ones inherited from the PHP panel do not, and this
+  // fills them in once, the first time somebody orders to them.
+  //
+  // Deliberately NOT awaited. It costs a Google lookup and the customer is
+  // waiting on this response; the tracking screen polls, so a pin that lands a
+  // second later is indistinguishable from one that was already there.
+  try {
+    const { ensureAddressPin } = require("./addressGeo");
+    ensureAddressPin(address).catch(() => {});
+  } catch (geoError) {
+    console.log("MFB-error-logs ~ order placed ~ address geo ~", geoError.message);
+  }
+
   // Tell the vendor to start cooking and admin staff that an order landed.
   // Previously this only ran when an admin changed an order's status, which
   // meant the vendor learned about an order only after someone had already

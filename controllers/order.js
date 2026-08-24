@@ -74,33 +74,70 @@ async function loadLifecycleFields(orderId) {
  * a normal answer — the screen falls back to a straight line rather than an
  * empty map.
  */
+// The two ends of a delivery, from whichever record actually knows them.
+//
+// The delivery job carries both once dispatch has created one — but that does
+// not happen until the restaurant accepts, and the customer wants to see where
+// their food is coming from before then. So this falls back to the source
+// records: the restaurant is a store_users row with a pin its vendor set in the
+// panel, and the delivery address stores its own coordinates.
+//
+// Returns nulls rather than throwing. Every caller treats a missing end as
+// "draw less", never as an error — a tracking screen with no map is still a
+// working tracking screen.
+async function orderEndpoints(order, job, businessName) {
+  let pickup = null;
+  let drop = null;
+
+  if (job?.pickup_lat != null && job?.pickup_lng != null) {
+    pickup = { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng), name: job.pickup_name };
+  }
+  if (job?.drop_lat != null && job?.drop_lng != null) {
+    drop = { lat: Number(job.drop_lat), lng: Number(job.drop_lng) };
+  }
+
+  if (pickup == null && order?.vendor_id != null) {
+    const { readPin } = require("../util/vendorColumns");
+    const pin = await readPin(order.vendor_id);
+    if (pin) pickup = { lat: pin.lat, lng: pin.lng, name: businessName || null };
+  }
+
+  if (drop == null && order?.address_id != null) {
+    const { geoReady } = require("../util/addressColumns");
+    if (await geoReady()) {
+      const [row] = await sequelize.query(
+        "SELECT `delivery_lat`, `delivery_lng` FROM `store_users_shipping_address` " +
+          "WHERE `address_id` = :id LIMIT 1",
+        { replacements: { id: order.address_id }, type: QueryTypes.SELECT }
+      );
+      if (row?.delivery_lat != null && row?.delivery_lng != null) {
+        drop = { lat: Number(row.delivery_lat), lng: Number(row.delivery_lng) };
+      }
+    }
+  }
+
+  return { pickup, drop };
+}
+
 const getOrderRoute = async (req, res) => {
   try {
     const order = await StoreOrders.findOne({
       where: { order_id: req.params.id, customer_id: req.user.user_id },
-      attributes: ["order_id"],
+      attributes: ["order_id", "vendor_id", "address_id"],
       raw: true,
     });
     if (order == null) {
       return res.status(404).json({ message: "Order not found" });
     }
 
+    // No early return on a missing job any more. Before dispatch creates one,
+    // the restaurant-to-door route is still the right thing to draw, and it is
+    // the stretch the customer is looking at longest.
     const job = await loadTrackingJob(order.order_id);
-    if (job == null) {
-      return res.json({ route: null, reason: "no delivery job yet" });
-    }
-
-    const drop =
-      job.drop_lat != null && job.drop_lng != null
-        ? { lat: Number(job.drop_lat), lng: Number(job.drop_lng) }
-        : null;
-    const pickupPoint =
-      job.pickup_lat != null && job.pickup_lng != null
-        ? { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng) }
-        : null;
+    const { pickup: pickupPoint, drop } = await orderEndpoints(order, job, null);
 
     let from = pickupPoint;
-    if (job.status === "picked_up" && job.dp_id != null) {
+    if (job?.status === "picked_up" && job.dp_id != null) {
       const { DeliveryPartner } = require("../models");
       const partner = await DeliveryPartner.findByPk(job.dp_id, {
         attributes: ["dp_lat", "dp_lng"],
@@ -268,12 +305,16 @@ const getActiveOrders = async (req, res) => {
       // Map endpoints. Sent whenever known so the screen can draw the route
       // without a second round-trip; the rider's own position is gated inside
       // buildTracking and is not part of this.
-      if (job?.pickup_lat != null && job?.pickup_lng != null) {
-        pickup = { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng), name: job.pickup_name };
-      }
-      if (job?.drop_lat != null && job?.drop_lng != null) {
-        drop = { lat: Number(job.drop_lat), lng: Number(job.drop_lng) };
-      }
+      //
+      // Same resolver the route endpoint uses, so the pins and the line drawn
+      // between them can never come from different records.
+      ({ pickup, drop } = await orderEndpoints(
+        order,
+        job,
+        // belongsTo with no alias and a model named "business", so the include
+        // lands on order.business.
+        order.business?.business_name || null
+      ));
     } catch (err) {
       // Tracking is an enhancement. A customer must still be able to read
       // their order if any part of the delivery side is unavailable.

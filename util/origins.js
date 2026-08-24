@@ -25,6 +25,25 @@ const list = () =>
 
 const allows = (origin) => Boolean(origin) && list().includes(trimTrailingSlashes(origin));
 
+// Origins we have already complained about, so a misconfigured front end logs
+// once rather than on every request.
+//
+// A CORS rejection is otherwise completely silent from the server's side: we
+// return a perfectly good 200, the browser throws the body away, and nothing
+// anywhere says why the site looks empty. That is a miserable thing to debug
+// against a deployed host, so the first request from an unknown origin says
+// exactly what to add and where.
+const complained = new Set();
+
+function noteRejected(origin) {
+  if (!origin || complained.has(origin)) return;
+  complained.add(origin);
+  console.log(
+    `MFB ~ CORS ~ blocked origin ${origin} — add it to ADMIN_PANEL_ORIGINS ` +
+      `(comma-separated). Currently allowed: ${list().join(", ") || "(none)"}`
+  );
+}
+
 /**
  * Where to send a browser after an off-site round trip.
  *
@@ -50,4 +69,4 @@ function webBase(req) {
   return list()[0] || "http://localhost:5173";
 }
 
-module.exports = { list, allows, webBase };
+module.exports = { list, allows, webBase, noteRejected };
