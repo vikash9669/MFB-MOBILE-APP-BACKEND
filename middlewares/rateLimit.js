@@ -301,3 +301,29 @@ exports.tokenRefresh = createLimiter({
   failuresOnly: true,
   message: "Too many token refresh attempts. Please sign in again.",
 });
+
+// Starting a payment creates an order at the gateway AND a row in
+// store_payment_intents, so an authenticated client in a loop costs money and
+// fills a table. Keyed per user rather than per IP: everyone behind one mobile
+// carrier NAT shares an address, and throttling them together would break
+// checkout for a whole city.
+exports.paymentInitiate = createLimiter({
+  name: "payment-initiate",
+  windowMs: num(process.env.PAYMENT_INITIATE_WINDOW_MIN, 10) * MINUTE,
+  max: num(process.env.PAYMENT_INITIATE_MAX, 12),
+  key: (req) => (req.user?.user_id ? `user:${req.user.user_id}` : `ip:${clientIp(req)}`),
+  message: "Too many payment attempts. Please wait a minute and try again.",
+});
+
+// Confirm is POLLED, deliberately: the app retries while a payment settles and
+// the web return page re-checks every 2.5s until it gets an answer. A tight
+// limit here would strand a customer who HAS paid at "still processing", which
+// is far worse than the abuse it would prevent — so this is generous, and only
+// exists to stop a runaway client hammering the gateway's status API.
+exports.paymentConfirm = createLimiter({
+  name: "payment-confirm",
+  windowMs: num(process.env.PAYMENT_CONFIRM_WINDOW_MIN, 10) * MINUTE,
+  max: num(process.env.PAYMENT_CONFIRM_MAX, 120),
+  key: (req) => (req.user?.user_id ? `user:${req.user.user_id}` : `ip:${clientIp(req)}`),
+  message: "Too many status checks. Please wait a moment — your payment is safe.",
+});

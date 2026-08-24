@@ -244,6 +244,11 @@ const fetchStatus = async (merchantOrderId) => {
     providerTxnId: providerTxnId || (success ? String(data?.cf_order_id ?? "") || null : null),
     instrument,
     message,
+    // What the gateway says this order is worth, in RUPEES. Settlement compares
+    // it against the amount we quoted before creating anything.
+    amountInRupees: Number.isFinite(Number(data?.order_amount))
+      ? Number(data.order_amount)
+      : null,
   };
 };
 

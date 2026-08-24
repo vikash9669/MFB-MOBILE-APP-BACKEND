@@ -150,4 +150,18 @@ test("a upi:// payload is recognised, a checkout URL is not", () => {
   assert.equal(isUpiPayload("https://mercury-uat.phonepe.com/transact/uat_v3?token=x"), false);
   assert.equal(isUpiPayload(null), false);
   assert.equal(isUpiPayload(""), false);
+
+  // The one that mattered: Cashfree's sandbox answers the QR call with an
+  // https simulator URL that CARRIES UPI fields (pa=, am=, cu=) but is not a
+  // upi:// intent. Classifying it as a UPI code would have the rider telling
+  // the customer "scan this with any UPI app, the amount is filled in" about a
+  // link that opens a web page. Only the scheme decides.
+  assert.equal(
+    isUpiPayload(
+      "https://payments-test.cashfree.com/pgbillpayuiapi/simulator/212506136597280" +
+        "?pa=cashfree@testbank&pn=Cashfree&am=150.00&cu=INR"
+    ),
+    false,
+    "UPI query params do not make an https link a UPI QR"
+  );
 });

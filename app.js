@@ -11,6 +11,7 @@ const addressRoutes = require("./routes/address");
 const { startSessionSweeper } = require("./util/sessionSweeper");
 const { startPaymentSweeper } = require("./util/paymentSweeper");
 const { startOrderAcceptSweeper } = require("./util/orderAcceptSweeper");
+const { startOrphanJobSweeper } = require("./util/orphanJobSweeper");
 const { startDispatchEngine } = require("./util/dispatch/engine");
 const bannerRoutes = require("./routes/banner");
 const deliveryAuthRoutes = require("./routes/deliveryAuth");
@@ -144,6 +145,10 @@ sequelize
     startPaymentSweeper();
     // Re-alerts vendors who haven't accepted, then escalates to admin staff.
     startOrderAcceptSweeper();
+
+    // Recovers live orders that never reached the rider pool because
+    // queueDeliveryJob hit a transient failure at placement.
+    startOrphanJobSweeper();
     // Scores riders and offers accepted orders to them one at a time. Dormant
     // until migrations/2026-08-09-dispatch-engine.sql has run.
     startDispatchEngine();

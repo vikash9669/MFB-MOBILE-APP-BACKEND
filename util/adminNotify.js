@@ -300,10 +300,120 @@ async function notifyAdminsOrderCancelled({ orderId, shop, refunded, amount }) {
   }
 }
 
+/**
+ * A payment whose amount does not match what we quoted.
+ *
+ * Should be impossible: we set the amount when we create the order at the
+ * gateway and the customer cannot change it. So this firing means either a bug
+ * on our side or an anomaly on theirs, and in both cases a human has to look
+ * before anybody is given food.
+ */
+async function notifyAdminsPaymentMismatch({ merchantTxnId, quoted, collected, settled }) {
+  try {
+    const title = "Payment amount mismatch";
+    const body =
+      `Txn ${merchantTxnId}: quoted Rs${quoted}, gateway holds Rs${collected}. ` +
+      (settled ? "Order created anyway (customer paid more)." : "NO order created.");
+
+    return await fanOut({
+      channels: escalationChannels(),
+      mailEnvVar: "ORDER_ALERT_EMAILS",
+      notification: { title, body, icon: "warning" },
+      event: "payment.mismatch",
+      payload: { merchant_txn_id: merchantTxnId, quoted, collected, settled, title, body },
+      mail: () => ({
+        subject: `⚠️ Payment amount mismatch on ${merchantTxnId}`,
+        html:
+          `<p>The gateway reports <strong>Rs${escapeHtml(String(collected))}</strong> for ` +
+          `transaction <code>${escapeHtml(merchantTxnId)}</code>, but we quoted ` +
+          `<strong>Rs${escapeHtml(String(quoted))}</strong>.</p>` +
+          (settled
+            ? "<p>The customer paid at least the quoted amount, so the order was created. " +
+              "The difference needs refunding.</p>"
+            : '<p style="color:#b00020"><strong>No order was created.</strong> The customer ' +
+              "has been charged less than the order is worth — refund them or take the " +
+              "difference before releasing any food.</p>"),
+      }),
+      sms: () => `Payment mismatch ${merchantTxnId}: quoted Rs${quoted}, got Rs${collected}.`,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ notifyAdminsPaymentMismatch ~", err.message);
+    return { panel: 0, realtime: 0, email: null, sms: null, channels: [], error: err.message };
+  }
+}
+
+/**
+ * Payments the reconciliation sweep has given up on.
+ *
+ * This is the worst state the system can produce: the customer has been charged
+ * and no order exists. It used to be a console.log, which on a hosted box means
+ * nobody will ever see it.
+ */
+async function notifyAdminsPaymentsStuck({ count, hours }) {
+  try {
+    const title = `${count} payment(s) charged with no order`;
+    const body =
+      `Stuck PENDING for over ${hours}h and no longer polled. ` +
+      "Each one may be a customer charged for nothing.";
+
+    return await fanOut({
+      channels: escalationChannels(),
+      mailEnvVar: "ORDER_ALERT_EMAILS",
+      notification: { title, body, icon: "error" },
+      event: "payment.stuck",
+      payload: { count, hours, title, body },
+      mail: () => ({
+        subject: `⚠️ ${count} payment(s) taken with no order created`,
+        html:
+          `<p><strong>${count}</strong> payment(s) have been PENDING for more than ` +
+          `${hours} hours and are no longer being polled.</p>` +
+          "<p>Each is potentially a customer who paid and received nothing. Review " +
+          "<code>store_payment_intents</code> where <code>status = 'PENDING'</code>.</p>",
+      }),
+      sms: () => `${count} payment(s) charged with no order. Check store_payment_intents.`,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ notifyAdminsPaymentsStuck ~", err.message);
+    return { panel: 0, realtime: 0, email: null, sms: null, channels: [], error: err.message };
+  }
+}
+
+/** A refund the gateway has rejected. The customer is still out of pocket. */
+async function notifyAdminsRefundFailed({ merchantRefundId, orderId, amount, reason }) {
+  try {
+    const title = `Refund failed for order #${orderId}`;
+    const body = `Rs${amount} could not be refunded (${reason}). The customer is still owed it.`;
+
+    return await fanOut({
+      channels: escalationChannels(),
+      mailEnvVar: "ORDER_ALERT_EMAILS",
+      notification: { title, body, icon: "error", refOrderId: orderId },
+      event: "refund.failed",
+      payload: { merchant_refund_id: merchantRefundId, order_id: orderId, amount, reason, title, body },
+      mail: () => ({
+        subject: `⚠️ Refund failed for order #${orderId}`,
+        html:
+          `<p>Refund <code>${escapeHtml(merchantRefundId)}</code> of ` +
+          `<strong>Rs${escapeHtml(String(amount))}</strong> for order #${orderId} was ` +
+          `rejected by the gateway: ${escapeHtml(String(reason))}.</p>` +
+          "<p>The customer has not got their money back. This has to be settled by hand.</p>" +
+          `<p><a href="${orderUrl(orderId)}">Open the order</a></p>`,
+      }),
+      sms: () => `Refund FAILED order #${orderId} Rs${amount}: ${reason}`,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ notifyAdminsRefundFailed ~", err.message);
+    return { panel: 0, realtime: 0, email: null, sms: null, channels: [], error: err.message };
+  }
+}
+
 module.exports = {
   notifyAdminsRiderApplied,
   notifyAdminsOrderStuck,
   notifyAdminsOrderCancelled,
+  notifyAdminsPaymentMismatch,
+  notifyAdminsPaymentsStuck,
+  notifyAdminsRefundFailed,
   // Exported for tests: these are pure decisions worth testing without a
   // database or a live SMTP host behind them.
   _enabledChannels: enabledChannels,

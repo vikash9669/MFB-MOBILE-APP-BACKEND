@@ -4,6 +4,7 @@ const userController = require("../controllers/user");
 const authController = require("../controllers/auth");
 const notifications = require("../controllers/customerNotifications");
 const paymentController = require("../controllers/payment");
+const { paymentInitiate, paymentConfirm } = require("../middlewares/rateLimit");
 const { verifyToken } = require("../middlewares/verifyToken");
 const storefront = require("../controllers/storefront");
 const riderRating = require("../controllers/riderRating");
@@ -34,8 +35,8 @@ router.post("/orders/:orderId/rate", verifyToken, riderRating.rate);
 // ── Online payment (PhonePe) ────────────────────────────────────────
 // initiate → app runs the SDK → confirm. The order row is created inside
 // confirm (or the callback), never before the money is verified.
-router.post("/payment/initiate", verifyToken, paymentController.initiatePayment);
-router.post("/payment/confirm", verifyToken, paymentController.confirmPayment);
+router.post("/payment/initiate", verifyToken, paymentInitiate, paymentController.initiatePayment);
+router.post("/payment/confirm", verifyToken, paymentConfirm, paymentController.confirmPayment);
 
 // ── Notifications (in-app centre + unread badge) ────────────────────
 router.get("/notifications", verifyToken, notifications.list);

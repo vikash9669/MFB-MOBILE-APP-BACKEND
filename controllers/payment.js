@@ -95,12 +95,29 @@ const initiatePayment = async (req, res) => {
       vendor_id: business_user_id,
       address_id,
       amount: pricing.payable,
-      // Snapshot the request so the order is rebuilt from what was priced, not
-      // from whatever the client sends to /confirm.
+      // Snapshot the request AND the prices it was quoted at.
+      //
+      // Settlement used to re-run priceCart, which meant a menu edit, a coupon
+      // expiring or a delivery-charge change between "pay" and "paid" produced
+      // an order whose order_amount was not the figure the customer agreed to
+      // and not the figure the gateway collected. Freezing the quote here is
+      // what makes the price the customer saw the price they get.
       cart_snapshot: JSON.stringify({
         product_ids_with_quantity,
         coupon_code: coupon_code ?? null,
         platform: platform ?? null,
+        // Only what createOrder needs, so the row stays small and there is no
+        // second copy of the whole product record to drift.
+        quoted: {
+          order_amount: pricing.order_amount,
+          order_discount: pricing.order_discount,
+          delivery_charges: pricing.delivery_charges,
+          payable: pricing.payable,
+          productDetails: pricing.productDetails.map((p) => ({
+            product_id: p.product_id,
+            product_mrp: p.product_mrp,
+          })),
+        },
       }),
       method: String(method).toUpperCase(),
       status: "PENDING",
@@ -228,9 +245,29 @@ const confirmPayment = async (req, res) => {
         .json({ status: "FAILED", message: status.message || "Payment failed" });
     }
 
-    const { order_id } = await settleIntent(intent, status.providerTxnId);
-    const order = await findOrderById(order_id);
+    const { order_id, mismatch } = await settleIntent(
+      intent,
+      status.providerTxnId,
+      status.amountInRupees
+    );
 
+    // The gateway holds less than the order is worth. Admins have been alerted
+    // and a human has to settle it; the customer must not be told the order is
+    // placed, because it is not.
+    //
+    // Reported as PENDING rather than a distinct status on purpose. Both
+    // clients treat anything that is not PAID or PENDING as "a definite no,
+    // no money moved, safe to retry" — and here money HAS moved, so that
+    // wording would be untrue and a retry could charge them twice. PENDING is
+    // the one answer that is honest and cannot cause a second payment.
+    if (mismatch || order_id == null) {
+      return res.status(202).json({
+        status: "PENDING",
+        message: "Your payment is being verified. We'll confirm your order shortly.",
+      });
+    }
+
+    const order = await findOrderById(order_id);
     res.status(201).json({ status: "PAID", order });
   } catch (error) {
     console.error("MFB-error-logs ~ confirmPayment:", error);
@@ -300,7 +337,7 @@ const paymentCallback = async (req, res) => {
     const status = await gateway.fetchStatus(merchantOrderId);
 
     if (status.success && intent.status !== "PAID") {
-      await settleIntent(intent, status.providerTxnId);
+      await settleIntent(intent, status.providerTxnId, status.amountInRupees);
     } else if (!status.success && !status.pending && intent.status === "PENDING") {
       await intent.update({
         status: "FAILED",

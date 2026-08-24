@@ -35,6 +35,11 @@ const PURPOSE = "cod_collection";
 
 // PhonePe expires its own checkout; keep ours a little shorter so a rider is
 // never staring at a QR the gateway has already abandoned.
+// Whether a collect payload is a real UPI intent or merely a link to a web
+// checkout. The string itself is the authority: providers differ, and the
+// same provider differs between sandbox and production.
+const isUpiPayload = (s) => /^upi:\/\//i.test(String(s || ""));
+
 const TTL_SEC = Number(process.env.COD_COLLECT_TTL_SEC) || 900;
 
 const newTxnId = (doId) =>
@@ -141,13 +146,19 @@ async function startCollection({ doId, dpId }) {
         expiresInSec: TTL_SEC,
         sourceOrderId: job.source_order_id ?? undefined,
       });
-      // Only a raw upi:// string is usable here: collect_url is a URL column
-      // and the rider's screen renders a QR from that string. A provider that
-      // can only return a rendered image is treated as "no QR available" and
-      // falls through to the checkout link below, rather than half-working.
+      // collect_url is a URL column and the rider's screen renders a QR from
+      // whatever string it holds, so only a text payload is usable here. A
+      // provider that can return nothing but a rendered image is treated as
+      // "no QR available" and falls through to the checkout link below.
       if (qr?.qrString) {
         payload = qr.qrString;
-        isUpiQr = true;
+        // Derived from the string, NOT assumed from the fact that a QR came
+        // back. Cashfree's sandbox answers this call with an https simulator
+        // URL rather than a upi:// intent, and claiming that is a UPI code
+        // would have the rider telling the customer "scan this with any UPI
+        // app, the amount is filled in" about a link that opens a web page.
+        // The payload is the only honest authority on what it is.
+        isUpiQr = isUpiPayload(payload);
       }
     } catch (err) {
       console.log("MFB ~ collection ~ UPI QR unavailable, using checkout link ~", err.message);
@@ -293,7 +304,6 @@ async function settleCollection(intent) {
  * reports what this returns.
  */
 /** A payment payload is a UPI QR if it is a upi:// deep link; anything else is a URL. */
-const isUpiPayload = (s) => /^upi:\/\//i.test(String(s || ""));
 
 /**
  * Asks the right PhonePe product whether an intent has been paid.

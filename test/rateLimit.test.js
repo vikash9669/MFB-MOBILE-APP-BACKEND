@@ -396,3 +396,65 @@ test("the customer and partner apps share one OTP allowance per phone", () => {
   );
   limiters.otpSendPerPhone.clear();
 });
+
+// ── payment endpoints ──────────────────────────────────────────────────────
+// Starting a payment creates an order at the gateway and a row in
+// store_payment_intents, so an authenticated client in a loop costs real money.
+// Confirm is the opposite problem: it is polled on purpose, and throttling it
+// would leave a customer who HAS paid staring at "still processing".
+
+test("both payment limiters exist and are keyed per user", () => {
+  const rl = require("../middlewares/rateLimit");
+  for (const name of ["paymentInitiate", "paymentConfirm"]) {
+    assert.equal(typeof rl[name], "function", `${name} should be middleware`);
+  }
+});
+
+test("confirm is far more permissive than initiate", () => {
+  const before = { ...process.env };
+  try {
+    delete process.env.PAYMENT_INITIATE_MAX;
+    delete process.env.PAYMENT_CONFIRM_MAX;
+    delete require.cache[require.resolve("../middlewares/rateLimit")];
+    const rl = require("../middlewares/rateLimit");
+
+    // Drive each limiter until it refuses, and count how far it got.
+    const drive = (mw) => {
+      const req = { user: { user_id: 4242 }, ip: "1.2.3.4", socket: {} };
+      let allowed = 0;
+      for (let i = 0; i < 500; i += 1) {
+        let passed = false;
+        const res = { status: () => ({ json: () => {} }), setHeader: () => {} };
+        mw(req, res, () => { passed = true; });
+        if (!passed) break;
+        allowed += 1;
+      }
+      return allowed;
+    };
+
+    const initiate = drive(rl.paymentInitiate);
+    const confirm = drive(rl.paymentConfirm);
+    assert.ok(initiate > 0 && initiate <= 20, `initiate should be tight, got ${initiate}`);
+    assert.ok(confirm >= 100, `confirm must not strand a paying customer, got ${confirm}`);
+    assert.ok(confirm > initiate * 5, "confirm has to absorb polling");
+  } finally {
+    Object.assign(process.env, before);
+  }
+});
+
+test("the payment routes actually mount their limiters", () => {
+  const router = require("../routes/users");
+  const find = (p) =>
+    router.stack.find((l) => l.route && l.route.path === p && l.route.methods.post);
+
+  for (const [path, limiter] of [["/payment/initiate", "payment-initiate"],
+                                 ["/payment/confirm", "payment-confirm"]]) {
+    const layer = find(path);
+    assert.ok(layer, `${path} should be a POST route`);
+    const names = layer.route.stack.map((h) => h.handle.name || "anonymous");
+    assert.ok(
+      layer.route.stack.length >= 3,
+      `${path} should have verifyToken + limiter + handler, got ${names.join(", ")}`
+    );
+  }
+});

@@ -189,6 +189,10 @@ const fetchStatus = async (merchantOrderId) => {
     // UPI_INTENT / UPI_COLLECT / CARD / NET_BANKING — what was actually used.
     instrument: detail?.paymentMode || null,
     message: data?.errorCode || data?.detailedErrorCode || state,
+    // PhonePe reports paise everywhere; settlement compares rupees.
+    amountInRupees: Number.isFinite(Number(data?.amount))
+      ? Number(data.amount) / 100
+      : null,
   };
 };
 

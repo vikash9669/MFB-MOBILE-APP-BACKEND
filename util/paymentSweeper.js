@@ -17,7 +17,9 @@
 // confirm path already trusts, and settlement goes through the same
 // settleIntent as everything else, so a sweep that races a late confirm still
 // produces exactly one order.
-const { Op } = require("sequelize");
+const { Op, QueryTypes } = require("sequelize");
+const sequelize = require("./database");
+const { refundsReady } = require("./lifecycleColumns");
 const { PaymentIntent } = require("../models");
 const gateway = require("./gateway");
 const { settleIntent } = require("./paymentSettlement");
@@ -100,9 +102,10 @@ async function sweepOnce() {
       if (status.success) {
         const { order_id, alreadySettled } = await settleIntent(
           intent,
-          status.providerTxnId
+          status.providerTxnId,
+          status.amountInRupees
         );
-        if (!alreadySettled) {
+        if (!alreadySettled && order_id != null) {
           settled.push(`${intent.merchant_txn_id} -> order ${order_id}`);
         }
       } else if (!status.pending) {
@@ -138,6 +141,87 @@ async function sweepOnce() {
   return { settled, failed, checked: due.length };
 }
 
+/**
+ * Chases refunds we started and never heard back about.
+ *
+ * refundPayment records PENDING and returns — every gateway settles refunds
+ * asynchronously, over days for cards. Nothing polled after that, so the column
+ * stayed PENDING for ever: a refund the gateway later REJECTED looked identical
+ * to one still in flight, and the customer simply never got their money while
+ * the row said everything was fine.
+ *
+ * Read and written with raw SQL because the refund columns are deliberately not
+ * on the PaymentIntent model — see util/orderLifecycle.js — and are only
+ * present once the migration has run.
+ */
+async function reconcileRefunds() {
+  if (!(await refundsReady())) return { checked: 0, settled: 0, failed: 0 };
+
+  const rows = await sequelize.query(
+    `SELECT \`pi_id\`, \`merchant_txn_id\`, \`merchant_refund_id\`, \`order_id\`,
+            \`refund_amount\`
+       FROM \`store_payment_intents\`
+      WHERE \`merchant_refund_id\` IS NOT NULL
+        AND \`refund_status\` = 'PENDING'
+      ORDER BY \`pi_id\` ASC
+      LIMIT :batch`,
+    { replacements: { batch: BATCH }, type: QueryTypes.SELECT }
+  );
+
+  let settled = 0;
+  let failed = 0;
+
+  for (const row of rows) {
+    let status;
+    try {
+      status = await gateway.fetchRefundStatus({
+        merchantRefundId: row.merchant_refund_id,
+        originalMerchantOrderId: row.merchant_txn_id,
+      });
+    } catch (err) {
+      // Transient. Leave it PENDING and try again next tick.
+      console.log(`MFB ~ refund sweep ~ ${row.merchant_refund_id} ~ ${err.message}`);
+      continue;
+    }
+
+    if (status.completed) {
+      await sequelize.query(
+        `UPDATE \`store_payment_intents\`
+            SET \`refund_status\` = 'COMPLETED', \`refunded_at\` = UTC_TIMESTAMP()
+          WHERE \`pi_id\` = :pid AND \`refund_status\` = 'PENDING'`,
+        { replacements: { pid: row.pi_id }, type: QueryTypes.UPDATE }
+      );
+      settled += 1;
+      console.log(
+        `MFB ~ refund sweep ~ ${row.merchant_refund_id} completed (order #${row.order_id})`
+      );
+    } else if (status.failed) {
+      await sequelize.query(
+        `UPDATE \`store_payment_intents\`
+            SET \`refund_status\` = 'FAILED', \`refund_failure\` = :reason
+          WHERE \`pi_id\` = :pid AND \`refund_status\` = 'PENDING'`,
+        {
+          replacements: { pid: row.pi_id, reason: String(status.message).slice(0, 255) },
+          type: QueryTypes.UPDATE,
+        }
+      );
+      failed += 1;
+      // A rejected refund means the customer is still out of pocket and nothing
+      // else in the system will notice. This is the one that has to reach a human.
+      const { notifyAdminsRefundFailed } = require("./adminNotify");
+      notifyAdminsRefundFailed({
+        merchantRefundId: row.merchant_refund_id,
+        orderId: row.order_id,
+        amount: row.refund_amount,
+        reason: status.message,
+      }).catch((e) => console.log("MFB ~ refund sweep ~ alert ~", e.message));
+    }
+    // Anything else (PENDING, ONHOLD) is still in flight: leave it alone.
+  }
+
+  return { checked: rows.length, settled, failed };
+}
+
 /** Payments stuck past MAX_AGE_HOURS. Money may have moved; a human must look. */
 async function abandonedCount() {
   return PaymentIntent.count({
@@ -156,6 +240,7 @@ function startPaymentSweeper() {
   const tick = async () => {
     try {
       await sweepOnce();
+      await reconcileRefunds();
 
       // Report the stuck pile only when it changes, so it stays visible without
       // becoming a log every minute that everyone learns to ignore.
@@ -166,6 +251,13 @@ function startPaymentSweeper() {
           `MFB ~ payment sweeper ~ ${stuck} payment(s) stuck PENDING for over ` +
             `${MAX_AGE_HOURS}h and no longer polled. These may be charged with no ` +
             "order — review store_payment_intents manually."
+        );
+        // A log line on a hosted box is not a signal anyone receives. This is
+        // the worst state the system can produce, so it goes to the people who
+        // can do something about it.
+        const { notifyAdminsPaymentsStuck } = require("./adminNotify");
+        notifyAdminsPaymentsStuck({ count: stuck, hours: MAX_AGE_HOURS }).catch((e) =>
+          console.log("MFB ~ payment sweeper ~ stuck alert ~", e.message)
         );
       }
     } catch (err) {
@@ -186,6 +278,7 @@ function startPaymentSweeper() {
 }
 
 module.exports = {
+  reconcileRefunds,
   sweepOnce,
   abandonedCount,
   startPaymentSweeper,
