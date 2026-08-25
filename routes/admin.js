@@ -178,6 +178,7 @@ router.post("/notifications/:id/read", adminNotifications.markRead);
 // ── Delivery dispatch engine ───────────────────────────────────────
 // The brief's /dispatch/* surface, under the panel's existing auth.
 router.get("/dispatch/status", dispatch.status);
+router.get("/dispatch/unassigned", dispatch.unassigned);
 router.get("/dispatch/jobs/:id", dispatch.jobDetail);
 // Scores the fleet for a job without offering anything — the "why did that
 // rider get it?" endpoint.

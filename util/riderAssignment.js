@@ -65,6 +65,10 @@ async function assignToPanelRider(orderId, riderId, { previousRiderId } = {}) {
         icon: "assignment",
         title: "New delivery assigned",
         body: `Order #${orderId} has been assigned to you. Open the app to start.`,
+        // Call-style, like an engine offer: a manual assignment is usually the
+        // rescue of a job nobody picked up, so it is the last thing that should
+        // arrive as a silent tray notification.
+        call: true,
         data: { do_id: String(result.do_id), order_id: String(orderId) },
       });
       pushed = true;

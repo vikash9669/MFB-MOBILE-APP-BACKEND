@@ -23,7 +23,7 @@ const sequelize = require("../database");
 const { DeliveryOrder } = require("../../models");
 const { config } = require("./config");
 const { dispatchReady } = require("./columns");
-const { findCandidates } = require("./riderSearch");
+const { findCandidates, eligibleRiders } = require("./riderSearch");
 const { computeDispatchAt } = require("./timing");
 const offers = require("./offers");
 const { notifyPartner } = require("../deliveryNotify");
@@ -116,6 +116,10 @@ async function shouldLogSearch(doId, radiusKm, everySec) {
  */
 async function offerNext(job) {
   const cfg = config();
+
+  // Broadcast mode offers to the whole nearby fleet at once instead of one
+  // ranked rider at a time. Entirely separate control flow — see offerBroadcast.
+  if (cfg.mode === "broadcast") return offerBroadcast(job, cfg);
 
   // Already out with someone — leave it alone until it expires.
   if (await offers.hasLiveOffer(job.do_id)) return null;
@@ -217,6 +221,131 @@ async function offerNext(job) {
   }).catch(() => {});
 
   return `#${job.do_id} → rider ${best.rider.dpId} (score ${best.score}, ${best.distanceKm}km, r${round})`;
+}
+
+/**
+ * Broadcast one job to every eligible rider within broadcastRadiusKm at once.
+ *
+ * The re-broadcast cadence is not a timer here: while any offer from the last
+ * round is still live, hasLiveOffer() short-circuits this and the job is left
+ * alone. Only once the whole round has lapsed (after broadcastTtlSec) does the
+ * next round go out — so broadcastTtlSec IS the gap between broadcasts. When the
+ * job has been searching past adminEscalateMin with nobody accepting, a human is
+ * pulled in instead of broadcasting again.
+ */
+async function offerBroadcast(job, cfg) {
+  // A round is still standing with the fleet — wait for it to lapse.
+  if (await offers.hasLiveOffer(job.do_id)) return null;
+
+  // Past the window with nobody accepting: hand it to a human.
+  const searchingMin = await minutesSearching(job.do_id);
+  if (searchingMin != null && searchingMin >= cfg.adminEscalateMin) {
+    await escalateToAdmin(job, `no rider accepted within ${Math.round(searchingMin)} min`);
+    return `#${job.do_id} → admin (no rider)`;
+  }
+
+  const centre = { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng) };
+  if (!Number.isFinite(centre.lat) || !Number.isFinite(centre.lng)) {
+    await escalateToAdmin(job, "job has no pickup coordinates");
+    return `#${job.do_id} → admin (no coordinates)`;
+  }
+
+  // Everyone in range, no expanding rings and no scoring — a broadcast reaches
+  // the whole nearby fleet and lets the fastest finger win.
+  const candidates = await eligibleRiders(centre, cfg.broadcastRadiusKm, { hasColumns: true });
+  const round = Number(job.offer_round || 0) + 1;
+
+  if (candidates.length === 0) {
+    if (await shouldLogSearch(job.do_id, cfg.broadcastRadiusKm, cfg.searchLogEverySec)) {
+      await offers.logDispatch(job.do_id, "search", {
+        radiusKm: cfg.broadcastRadiusKm,
+        candidates: 0,
+        detail: "no eligible riders in range",
+      });
+    }
+    await sequelize.query(
+      `UPDATE \`store_delivery_orders\`
+          SET \`dispatch_state\` = 'searching', \`search_radius_km\` = :radius
+        WHERE \`do_id\` = :doId`,
+      { replacements: { doId: job.do_id, radius: cfg.broadcastRadiusKm }, type: QueryTypes.UPDATE }
+    );
+    return null;
+  }
+
+  const n = await offers.createBroadcastOffers(job, candidates, round, cfg.broadcastTtlSec);
+  lastSearchLog.delete(job.do_id);
+
+  await sequelize.query(
+    `UPDATE \`store_delivery_orders\`
+        SET \`dispatch_state\` = 'searching', \`offer_round\` = :round,
+            \`search_radius_km\` = :radius
+      WHERE \`do_id\` = :doId`,
+    {
+      replacements: { doId: job.do_id, round, radius: cfg.broadcastRadiusKm },
+      type: QueryTypes.UPDATE,
+    }
+  );
+
+  // Ring every candidate at once, call-style — the offer stands for
+  // broadcastTtlSec and the first to accept wins via the atomic claim.
+  for (const c of candidates) {
+    // eligibleRiders() returns dpId at the top level (no `.rider` wrapper).
+    notifyPartner(c.dpId, {
+      category: "orders",
+      icon: "delivery_dining",
+      title: `New delivery · ₹${job.earn_total}`,
+      body: `${job.pickup_name || "Pickup"} → ${job.drop_area || "drop"} · ${c.distanceKm}km · first to accept gets it`,
+      call: true,
+      ttlSec: cfg.broadcastTtlSec,
+      data: {
+        type: "order_offer",
+        do_id: job.do_id,
+        expires_in: cfg.broadcastTtlSec,
+        pickup_name: job.pickup_name || "",
+        drop_area: job.drop_area || "",
+        distance_km: c.distanceKm,
+        earn_total: job.earn_total,
+      },
+    }).catch(() => {});
+  }
+
+  return `#${job.do_id} ⇒ broadcast r${round} to ${n} rider(s) ≤${cfg.broadcastRadiusKm}km`;
+}
+
+/**
+ * No rider took the job in the allotted window. Park it for a human AND tell
+ * them — the targeted ladder's markExhausted only parked it silently.
+ *
+ * The admin alert fires exactly once: the state flip to 'failed' is conditional
+ * on the row not already being 'failed', so two racing ticks cannot both alert.
+ */
+async function escalateToAdmin(job, note) {
+  const [, changed] = await sequelize.query(
+    `UPDATE \`store_delivery_orders\`
+        SET \`dispatch_state\` = 'failed', \`dispatch_note\` = :note
+      WHERE \`do_id\` = :doId AND \`status\` = 'offered' AND \`dispatch_state\` <> 'failed'`,
+    { replacements: { doId: job.do_id, note: String(note).slice(0, 255) }, type: QueryTypes.UPDATE }
+  );
+
+  // Someone else (another tick, or a rider accepting) got here first.
+  if (Number(changed ?? 0) === 0) return;
+
+  await offers.logDispatch(job.do_id, "exhausted", { detail: note });
+  lastSearchLog.delete(job.do_id);
+  console.log(`MFB ~ dispatch ~ NO RIDER for job #${job.do_id}: ${note}`);
+
+  try {
+    const { notifyAdminsNoRider } = require("../adminNotify");
+    await notifyAdminsNoRider({
+      orderId: job.source_order_id,
+      doId: job.do_id,
+      pickup: job.pickup_name,
+      dropArea: job.drop_area,
+      minutesWaiting: Math.round((await minutesSearching(job.do_id)) ?? 0),
+    });
+  } catch (err) {
+    console.log("MFB ~ dispatch ~ no-rider admin notify ~", err.message);
+  }
 }
 
 /** Nobody took it. Park it for a human rather than looping forever. */

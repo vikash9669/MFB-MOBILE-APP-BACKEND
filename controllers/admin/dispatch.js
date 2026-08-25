@@ -89,6 +89,39 @@ exports.status = async (req, res) => {
   }
 };
 
+// GET /admin/dispatch/unassigned — orders the engine could not place.
+//
+// These are the jobs that reached the end of the broadcast window with nobody
+// accepting: the food is prepared and no rider is coming. The panel's Orders
+// screen surfaces this as its own section so an operator assigns one by hand.
+exports.unassigned = async (req, res) => {
+  try {
+    if (!(await dispatchReady())) return res.json({ orders: [] });
+
+    const rows = await sequelize.query(
+      `SELECT d.\`do_id\`, d.\`source_order_id\` AS order_id, d.\`dispatch_note\`,
+              d.\`pickup_name\`, d.\`drop_area\`, d.\`earn_total\`,
+              TIMESTAMPDIFF(MINUTE, d.\`dispatch_at\`, UTC_TIMESTAMP()) AS waiting_min,
+              o.\`order_status\`, o.\`order_received_time\`,
+              c.\`user_name\` AS customer_name, b.\`business_name\` AS vendor_name
+         FROM \`store_delivery_orders\` d
+         JOIN \`store_orders\` o ON o.\`order_id\` = d.\`source_order_id\`
+         LEFT JOIN \`store_users\` c ON c.\`user_id\` = o.\`customer_id\`
+         LEFT JOIN \`store_users_business\` b ON b.\`user_id\` = o.\`vendor_id\`
+        WHERE d.\`dispatch_state\` = 'failed' AND d.\`status\` = 'offered'
+          AND o.\`order_status\` NOT IN (5, 6)
+        ORDER BY d.\`dispatch_at\` ASC
+        LIMIT 100`,
+      { type: QueryTypes.SELECT }
+    );
+
+    res.json({ orders: rows });
+  } catch (err) {
+    console.log("MFB-error-logs ~ dispatch unassigned ~ err:", err);
+    res.status(500).json({ message: "Failed to load unassigned orders" });
+  }
+};
+
 // GET /admin/dispatch/jobs/:id — the full decision trail for one job.
 exports.jobDetail = async (req, res) => {
   try {

@@ -14,6 +14,7 @@ const {
 // than fired unconditionally. See util/adminNotify.js.
 const {
   notifyAdminsOrderStuck,
+  notifyAdminsOrderFinalWarning,
   notifyAdminsOrderCancelled,
 } = require("../../util/adminNotify");
 
@@ -295,6 +296,69 @@ async function escalateUnaccepted(orderId, minutesWaiting, cancelAfterMin = 0) {
 }
 
 /**
+ * The 6-minute tier of the acceptance ladder.
+ *
+ * By now the vendor has had the panel ring, the reminder cadence and the admin
+ * escalation, and still nobody has moved the order. This is the last automated
+ * push before the auto-cancel: it emails BOTH the vendor (a direct nudge to the
+ * shop) and admin staff, and re-raises the in-app alert on both panels — the
+ * admin panel via notifyAdminsOrderFinalWarning, the vendor panel via the
+ * wait_stage the sweeper now exposes on the new-orders feed.
+ *
+ * Sent once per order. Email actually leaves only if SMTP is configured, so
+ * with mail switched off in testing this degrades to the in-app alerts alone.
+ */
+async function escalateUnacceptedEmail(orderId, minutesWaiting, cancelAfterMin = 0) {
+  const order = await StoreOrders.findByPk(orderId, { raw: true });
+  if (order == null) return null;
+  if (Number(order.order_status) !== 0) return { skipped: "already accepted" };
+
+  const [vendorUser, business] = await Promise.all([
+    order.vendor_id ? User.findByPk(order.vendor_id, { raw: true }) : null,
+    order.vendor_id
+      ? Business.findOne({ where: { user_id: order.vendor_id }, raw: true })
+      : null,
+  ]);
+
+  const shop = business?.business_name || vendorUser?.user_name || "the vendor";
+  const minutesUntilCancel = Math.max(0, Number(cancelAfterMin || 0) - Number(minutesWaiting));
+
+  // Vendor email — a direct final reminder to the shop itself.
+  const vendorResult = await send(
+    vendorUser?.user_email,
+    `Final reminder — order #${orderId} still not accepted`,
+    shell(
+      orderId,
+      business?.business_name || vendorUser?.user_name || "there",
+      `<p>Order #${orderId} has been waiting <strong>${minutesWaiting} minutes</strong> and is
+        still not accepted.</p>` +
+        (minutesUntilCancel > 0
+          ? `<p style="color:#b00020"><strong>It will be cancelled automatically in
+              ${minutesUntilCancel} minute(s)</strong> if you do not accept it — and any online
+              payment refunded.</p>`
+          : "") +
+        `<p><strong>Open your dashboard now to accept it:</strong></p>
+         ${button(vendorOrdersUrl(), "Accept order in dashboard")}`
+    )
+  );
+
+  // Admin fan-out with email + panel forced on for this tier, so admins are
+  // emailed and AdminBell rings a second time.
+  const adminResult = await notifyAdminsOrderFinalWarning({
+    orderId,
+    shop,
+    minutesWaiting,
+    minutesUntilCancel,
+    vendorPhone: vendorUser?.user_phone,
+  });
+
+  return {
+    vendor: { email: vendorUser?.user_email ?? null, ...vendorResult },
+    admins: adminResult,
+  };
+}
+
+/**
  * Tells admin staff an order was auto-cancelled, and whether the money went
  * back. A failed refund is the part a human must act on, so it is stated
  * plainly rather than buried in the body.
@@ -320,4 +384,5 @@ async function notifyOrderAutoCancelled(orderId, { refunded, amount }) {
 
 exports.notifyOrderReceived = notifyOrderReceived;
 exports.escalateUnaccepted = escalateUnaccepted;
+exports.escalateUnacceptedEmail = escalateUnacceptedEmail;
 exports.notifyOrderAutoCancelled = notifyOrderAutoCancelled;

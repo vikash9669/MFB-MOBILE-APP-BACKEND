@@ -230,8 +230,14 @@ exports.newOrders = async (req, res) => {
 
     const decorated = await decorate(rows);
 
+    // Each order's position on the acceptance ladder (0/1/2). The vendor's
+    // OrderBell re-rings when this climbs, which is how a still-pending order
+    // pulls the kitchen back at the 4- and 6-minute escalations without this
+    // process needing a channel to the vendor's browser.
+    const { stageOf } = require("../../util/orderAcceptSweeper");
+
     res.json({
-      orders: decorated.map(serialize),
+      orders: decorated.map((o) => ({ ...serialize(o), wait_stage: stageOf(o.order_id) })),
       latest_id: latestId,
       // How many arrived in total, which may exceed what we returned.
       total_new: await StoreOrders.count({

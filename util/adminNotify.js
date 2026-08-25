@@ -262,6 +262,99 @@ async function notifyAdminsOrderStuck({ orderId, shop, minutesWaiting, minutesUn
   }
 }
 
+/**
+ * The 6-minute "final warning" tier. Unlike notifyAdminsOrderStuck, email and
+ * the panel row are forced on regardless of ORDER_ESCALATION_CHANNELS — this
+ * step is defined to email admin staff and to ring AdminBell a second time.
+ * SMS still follows the channel config, since that one rings personal phones.
+ */
+async function notifyAdminsOrderFinalWarning({
+  orderId,
+  shop,
+  minutesWaiting,
+  minutesUntilCancel,
+  vendorPhone,
+}) {
+  try {
+    const title = `Order #${orderId} — final warning`;
+    const deadline =
+      minutesUntilCancel > 0 ? ` Auto-cancels in ${minutesUntilCancel} min.` : "";
+    const body = `${shop} still hasn't accepted after ${minutesWaiting} min.${deadline}`;
+
+    const channels = escalationChannels();
+    channels.add("panel");
+    channels.add("realtime");
+    channels.add("email");
+
+    return await fanOut({
+      channels,
+      mailEnvVar: "ORDER_ALERT_EMAILS",
+      notification: { title, body, icon: "schedule", refOrderId: orderId },
+      // Reuses the order.stuck event the panel already listens for; AdminBell
+      // rings off the new notification row, not the event name.
+      event: "order.stuck",
+      payload: { order_id: orderId, shop, minutes_waiting: minutesWaiting, title, body },
+      mail: () => ({
+        subject: `⚠️ Final warning — order #${orderId} not accepted after ${minutesWaiting} minutes`,
+        html:
+          `<p><strong>${escapeHtml(shop)}</strong> has still not accepted order #${orderId}, ` +
+          `${minutesWaiting} minutes after it was placed. The customer is still waiting.</p>` +
+          (minutesUntilCancel > 0
+            ? `<p style="color:#b00020"><strong>Auto-cancels in ${minutesUntilCancel} minute(s)</strong>, refunding any online payment.</p>`
+            : "") +
+          (vendorPhone ? `<p>Vendor phone: ${escapeHtml(vendorPhone)}</p>` : "") +
+          `<p><a href="${orderUrl(orderId)}">Open the order</a></p>`,
+      }),
+      sms: () =>
+        `Order #${orderId} FINAL warning. ${shop} silent ${minutesWaiting} min.${deadline}\n${orderUrl(orderId)}`,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ notifyAdminsOrderFinalWarning ~", err.message);
+    return { panel: 0, realtime: 0, email: null, sms: null, channels: [], error: err.message };
+  }
+}
+
+/**
+ * Dispatch found no rider. The customer's order is cooked (or cooking) and
+ * nobody is coming for it, so this needs a human now: bell + live event +
+ * email, all forced on regardless of ORDER_ESCALATION_CHANNELS. The panel's
+ * unassigned section reads the same 'failed' job this fires alongside.
+ */
+async function notifyAdminsNoRider({ orderId, doId, pickup, dropArea, minutesWaiting }) {
+  try {
+    const route = `${pickup || "Pickup"} → ${dropArea || "drop"}`;
+    const title = `Order #${orderId} — no rider`;
+    const body = `No rider accepted after ${minutesWaiting} min (${route}). Assign one manually.`;
+
+    const channels = escalationChannels();
+    channels.add("panel");
+    channels.add("realtime");
+    channels.add("email");
+
+    return await fanOut({
+      channels,
+      mailEnvVar: "ORDER_ALERT_EMAILS",
+      notification: { title, body, icon: "no_transfer", refOrderId: orderId },
+      event: "order.norider",
+      payload: { order_id: orderId, do_id: doId, route, minutes_waiting: minutesWaiting, title, body },
+      mail: () => ({
+        subject: `🛵 Order #${orderId} has no rider after ${minutesWaiting} minutes`,
+        html:
+          `<p>No delivery rider accepted order #${orderId} (${escapeHtml(route)}) within ` +
+          `${minutesWaiting} minutes of dispatch.</p>` +
+          `<p>The food is prepared and waiting. <strong>Assign a rider by hand</strong> from the ` +
+          `panel — only online riders are shown.</p>` +
+          `<p><a href="${orderUrl(orderId)}">Open the order</a></p>`,
+      }),
+      sms: () =>
+        `Order #${orderId} has NO rider after ${minutesWaiting} min (${route}). Assign one manually.\n${orderUrl(orderId)}`,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ notifyAdminsNoRider ~", err.message);
+    return { panel: 0, realtime: 0, email: null, sms: null, channels: [], error: err.message };
+  }
+}
+
 /** An order was auto-cancelled. Whether the money went back is the headline. */
 async function notifyAdminsOrderCancelled({ orderId, shop, refunded, amount }) {
   try {
@@ -410,6 +503,8 @@ async function notifyAdminsRefundFailed({ merchantRefundId, orderId, amount, rea
 module.exports = {
   notifyAdminsRiderApplied,
   notifyAdminsOrderStuck,
+  notifyAdminsOrderFinalWarning,
+  notifyAdminsNoRider,
   notifyAdminsOrderCancelled,
   notifyAdminsPaymentMismatch,
   notifyAdminsPaymentsStuck,

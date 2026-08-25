@@ -12,6 +12,7 @@ const {
   Location,
   Area,
   Cashback,
+  DeliveryPartner,
 } = require("../../models");
 const { QueryTypes } = require("sequelize");
 const sequelize = require("../../util/database");
@@ -878,7 +879,7 @@ exports.reports = async (req, res) => {
 // USER->_GetUsersList(3) and _GetUsersList(4): riders and vendors, name + id.
 exports.lookups = async (req, res) => {
   try {
-    const [riders, vendorUsers, businesses] = await Promise.all([
+    const [riders, vendorUsers, businesses, partners] = await Promise.all([
       User.findAll({
         where: { user_role: RIDER_ROLE },
         attributes: ["user_id", "user_name", "user_phone", "user_status"],
@@ -892,16 +893,29 @@ exports.lookups = async (req, res) => {
         raw: true,
       }),
       Business.findAll({ attributes: ["user_id", "business_name"], raw: true }),
+      // The delivery-app side of the same rows: whether the rider is signed in
+      // and accepting work right now. Same store_users table, dp_* columns.
+      DeliveryPartner.findAll({
+        attributes: ["dp_id", "dp_online", "dp_verification_status"],
+        raw: true,
+      }),
     ]);
     const bizById = Object.fromEntries(businesses.map((b) => [b.user_id, b.business_name]));
+    const partnerById = Object.fromEntries(partners.map((p) => [p.dp_id, p]));
 
     res.json({
-      riders: riders.map((r) => ({
-        user_id: r.user_id,
-        name: r.user_name,
-        phone: r.user_phone,
-        active: Number(r.user_status) === 1,
-      })),
+      riders: riders.map((r) => {
+        const dp = partnerById[r.user_id];
+        return {
+          user_id: r.user_id,
+          name: r.user_name,
+          phone: r.user_phone,
+          active: Number(r.user_status) === 1,
+          // For the manual-assign dropdown, which shows only online riders. A
+          // rider with no app account (dp row) is treated as offline.
+          online: dp != null && Number(dp.dp_online) === 1 && dp.dp_verification_status === "approved",
+        };
+      }),
       vendors: vendorUsers.map((v) => ({
         user_id: v.user_id,
         name: bizById[v.user_id] || v.user_name,

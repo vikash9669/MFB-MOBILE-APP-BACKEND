@@ -113,6 +113,72 @@ async function createOffer(job, candidate, round) {
   }
 }
 
+/**
+ * Broadcast mode: offer one job to EVERY candidate at once.
+ *
+ * The UNIQUE key on (do_id, dp_id) that makes targeted offers idempotent is the
+ * obstacle here — a re-broadcast to the same rider a round later would collide.
+ * So this uses INSERT … ON DUPLICATE KEY UPDATE to *re-arm* an existing row:
+ * a rider who ignored round 1 gets their offer set back to pending with a fresh
+ * expiry for round 2, while riders who came online since get a new row. Riders
+ * who already rejected or accepted are re-armed too — that is intended for a
+ * broadcast (a "no" a minute ago may be a "yes" now) and harmless, because the
+ * atomic claim still lets only one win.
+ *
+ * Returns how many riders now hold a live offer. Never throws.
+ */
+async function createBroadcastOffers(job, candidates, round, ttlSec) {
+  if (candidates.length === 0) return 0;
+
+  // One multi-row statement rather than a query per rider: a busy pickup can
+  // have a dozen candidates and this runs on every re-broadcast.
+  const values = candidates
+    .map(
+      (_, i) =>
+        `(:doId, :dp${i}, 'pending', :round, :dist${i}, :eta${i}, UTC_TIMESTAMP(), ` +
+        `DATE_ADD(UTC_TIMESTAMP(), INTERVAL :ttl SECOND))`
+    )
+    .join(", ");
+
+  // Candidates come straight from eligibleRiders(), which returns the rider
+  // fields at the top level (dpId, distanceKm) — NOT wrapped in `.rider` the way
+  // findCandidates() does. Read dpId defensively so either shape works.
+  const dpIdOf = (c) => c.dpId ?? c.rider?.dpId;
+  const replacements = { doId: job.do_id, round, ttl: Math.round(ttlSec) };
+  candidates.forEach((c, i) => {
+    replacements[`dp${i}`] = dpIdOf(c);
+    replacements[`dist${i}`] = c.distanceKm ?? null;
+    replacements[`eta${i}`] = c.etaMin ?? null;
+  });
+
+  try {
+    await sequelize.query(
+      `INSERT INTO \`store_delivery_offers\`
+         (\`do_id\`, \`dp_id\`, \`state\`, \`round\`, \`distance_km\`, \`eta_min\`,
+          \`offered_at\`, \`expires_at\`)
+       VALUES ${values}
+       ON DUPLICATE KEY UPDATE
+         \`state\` = 'pending',
+         \`round\` = VALUES(\`round\`),
+         \`distance_km\` = VALUES(\`distance_km\`),
+         \`eta_min\` = VALUES(\`eta_min\`),
+         \`offered_at\` = UTC_TIMESTAMP(),
+         \`expires_at\` = VALUES(\`expires_at\`),
+         \`responded_at\` = NULL`,
+      { replacements, type: QueryTypes.INSERT }
+    );
+  } catch (err) {
+    console.log("MFB ~ dispatch broadcast offers ~", err.message);
+    return 0;
+  }
+
+  await logDispatch(job.do_id, "broadcast", {
+    candidates: candidates.length,
+    detail: `round ${round} to ${candidates.length} rider(s), ${Math.round(ttlSec)}s window`,
+  });
+  return candidates.length;
+}
+
 /** The live offer aimed at this rider right now, if any. */
 async function liveOfferForRider(dpId) {
   const rows = await sequelize.query(
@@ -245,6 +311,7 @@ async function hasLiveOffer(doId) {
 
 module.exports = {
   createOffer,
+  createBroadcastOffers,
   acceptOffer,
   rejectOffer,
   expireStaleOffers,

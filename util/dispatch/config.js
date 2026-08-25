@@ -147,6 +147,24 @@ const config = () => ({
     maxReadyGapMin: num(process.env.DISPATCH_BATCH_READY_GAP_MIN, 8),
   },
 
+  // ── Dispatch model ──
+  //
+  // "broadcast" offers a job to EVERY eligible rider within broadcastRadiusKm
+  // at once — first to accept wins (the claim in offers.js is already atomic) —
+  // and re-broadcasts every broadcastTtlSec until adminEscalateMin, when a
+  // human is pulled in. "targeted" is the original ranked, one-rider-at-a-time
+  // ladder. Broadcast is the default; targeted stays available via env.
+  mode: String(process.env.DISPATCH_MODE || "broadcast").toLowerCase(),
+  // Everyone within this many km is offered the job in broadcast mode. No
+  // expanding rings — the whole point is to reach the whole nearby fleet now.
+  broadcastRadiusKm: num(process.env.DISPATCH_BROADCAST_RADIUS_KM, 15),
+  // How long one broadcast round stands before it is re-broadcast. The engine's
+  // "has a live offer?" gate turns this straight into the re-broadcast spacing.
+  broadcastTtlSec: num(process.env.DISPATCH_BROADCAST_TTL_SEC, 120),
+  // Minutes with nobody accepting before admin staff are alerted (bell + mail)
+  // and the job is parked in the panel's unassigned section.
+  adminEscalateMin: num(process.env.DISPATCH_ADMIN_ESCALATE_MIN, 4),
+
   // Master switch. When false the engine schedules and logs but never offers,
   // which is how you watch it think before letting it act.
   enabled: bool(process.env.DISPATCH_ENABLED, true),

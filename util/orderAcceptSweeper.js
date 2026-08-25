@@ -2,8 +2,14 @@
 //
 //   t=0                      order placed; vendor gets panel ring, WhatsApp, call, email
 //   every REMINDER_EVERY_MIN vendor re-alerted (WhatsApp + call)
-//   t=ESCALATE_MIN  (5 min)  admin told on WhatsApp + email that the vendor is silent
-//   t=CANCEL_MIN   (10 min)  order cancelled, online payment refunded, customer told
+//   t=ESCALATE_MIN   (4 min)  admin told (in-app ring), vendor panel re-rings
+//   t=EMAIL_ALL_MIN  (6 min)  email to BOTH vendor and admin, both panels re-alerted
+//   t=CANCEL_MIN    (10 min)  order cancelled, online payment refunded, customer told
+//
+// The vendor panel re-ring at 4 and 6 min is not pushed from here — this
+// process has no channel to the vendor's browser. Instead each order's stage is
+// exposed by stageOf() and read back by the panel's new-orders feed, so the
+// vendor's OrderBell rings again the moment the stage climbs. See stageOf below.
 //
 // "Accepted" means order_status has moved off 0 (Received). Any onward status —
 // Processed, Vendor, Ready to Ship — means somebody has acted on it.
@@ -36,10 +42,17 @@ const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 // Gap between vendor reminders.
 const REMINDER_EVERY_MIN = num(process.env.ORDER_ACCEPT_REMINDER_EVERY_MIN, 2);
-// When admin staff are pulled in.
-const ESCALATE_MIN = num(process.env.ORDER_ACCEPT_ESCALATE_MIN, 5);
-// The acceptance window. Past this the order is cancelled and refunded.
-const CANCEL_MIN = num(process.env.ORDER_ACCEPT_CANCEL_MIN, 10);
+// When admin staff are pulled in (in-app ring) and the vendor panel re-rings.
+const ESCALATE_MIN = num(process.env.ORDER_ACCEPT_ESCALATE_MIN, 4);
+// When both the vendor and admin are emailed and both panels re-alerted.
+const EMAIL_ALL_MIN = num(process.env.ORDER_ACCEPT_EMAIL_ALL_MIN, 6);
+// The acceptance window. Past this the order is cancelled and refunded. The
+// legacy key ORDER_ACCEPT_DEADLINE_MIN is honoured as a fallback so an existing
+// deployment's .env keeps controlling the deadline it always named.
+const CANCEL_MIN = num(
+  process.env.ORDER_ACCEPT_CANCEL_MIN ?? process.env.ORDER_ACCEPT_DEADLINE_MIN,
+  10
+);
 // Belt and braces: if auto-cancel is switched off, stop tracking eventually.
 const GIVE_UP_MIN = num(process.env.ORDER_ACCEPT_GIVE_UP_MIN, 60);
 // Auto-cancel is the only step that moves money, so it has its own kill switch
@@ -108,6 +121,35 @@ async function escalate(order, age) {
   );
 }
 
+// The 6-minute tier: email BOTH the vendor and admin, and re-raise the in-app
+// alert on both panels. Same cancel-deadline arithmetic as escalate above.
+async function emailAll(order, age) {
+  const { escalateUnacceptedEmail } = require("../controllers/admin/notify");
+  await escalateUnacceptedEmail(order.order_id, Math.round(age), AUTO_CANCEL ? CANCEL_MIN : 0).catch(
+    (err) => console.log("MFB-error-logs ~ accept sweeper ~ email-all ~", err.message)
+  );
+}
+
+/**
+ * How far along the acceptance ladder a pending order is, for the panel feed.
+ *
+ *   0  placed / being reminded        (t < ESCALATE_MIN)
+ *   1  admin escalated                (t >= ESCALATE_MIN)
+ *   2  final email to both sides sent (t >= EMAIL_ALL_MIN)
+ *
+ * Derived from the in-memory tracking flags rather than a clock, so it agrees
+ * exactly with what the sweeper has actually done — the vendor's OrderBell
+ * re-rings when this climbs, and must not ring ahead of the real alert. An
+ * order we are not tracking (accepted, or from before boot) is stage 0.
+ */
+function stageOf(orderId) {
+  const entry = tracked.get(orderId);
+  if (!entry) return 0;
+  if (entry.emailedAll) return 2;
+  if (entry.escalated) return 1;
+  return 0;
+}
+
 async function expire(order) {
   const result = await cancelOrder({
     orderId: order.order_id,
@@ -155,6 +197,7 @@ async function sweepOnce() {
 
   const reminded = [];
   const escalated = [];
+  const emailed = [];
   const cancelled = [];
 
   for (const order of pending) {
@@ -164,6 +207,7 @@ async function sweepOnce() {
         reminders: 0,
         lastReminderAt: null,
         escalated: false,
+        emailedAll: false,
       });
       continue; // its clock starts now
     }
@@ -224,6 +268,12 @@ async function sweepOnce() {
       escalated.push(`#${order.order_id}`);
     }
 
+    if (!entry.emailedAll && age >= EMAIL_ALL_MIN) {
+      entry.emailedAll = true;
+      await emailAll(order, age);
+      emailed.push(`#${order.order_id}`);
+    }
+
     if (dueForReminder(entry)) {
       await remind(order, entry).catch((err) =>
         console.log("MFB-error-logs ~ accept sweeper ~ remind ~", err.message)
@@ -238,11 +288,14 @@ async function sweepOnce() {
   if (escalated.length) {
     console.log("MFB ~ accept sweeper ~ ESCALATED to admin:", escalated.join(", "));
   }
+  if (emailed.length) {
+    console.log("MFB ~ accept sweeper ~ EMAILED vendor+admin:", emailed.join(", "));
+  }
   if (cancelled.length) {
     console.log("MFB ~ accept sweeper ~ AUTO-CANCELLED:", cancelled.join(", "));
   }
 
-  return { reminded, escalated, cancelled, tracking: tracked.size };
+  return { reminded, escalated, emailed, cancelled, tracking: tracked.size };
 }
 
 /** Runs on a timer. Never throws. */
@@ -267,8 +320,10 @@ function startOrderAcceptSweeper() {
 module.exports = {
   sweepOnce,
   startOrderAcceptSweeper,
+  stageOf,
   REMINDER_EVERY_MIN,
   ESCALATE_MIN,
+  EMAIL_ALL_MIN,
   CANCEL_MIN,
   AUTO_CANCEL,
   // exported for tests

@@ -245,12 +245,24 @@ const runPostOrderSideEffects = async ({ user_id, order_id, total_amount }) => {
   // Deliberately NOT awaited. It costs a Google lookup and the customer is
   // waiting on this response; the tracking screen polls, so a pin that lands a
   // second later is indistinguishable from one that was already there.
-  try {
+  //
+  // `address` was never in scope here — this function is called with
+  // { user_id, order_id, total_amount } and nothing else — so every order threw
+  // ReferenceError: address is not defined, the catch swallowed it, and the
+  // geocode never ran once. That is why delivery addresses had no coordinates
+  // and the tracking map had no destination to draw.
+  //
+  // Loaded from the order instead, so no caller has to change. Fire-and-forget
+  // for the reason above: the customer is waiting on this response.
+  void (async () => {
     const { ensureAddressPin } = require("./addressGeo");
-    ensureAddressPin(address).catch(() => {});
-  } catch (geoError) {
-    console.log("MFB-error-logs ~ order placed ~ address geo ~", geoError.message);
-  }
+    const placed = await StoreOrders.findByPk(order_id, { attributes: ["address_id"] });
+    if (placed?.address_id == null) return;
+    const address = await Address.findByPk(placed.address_id);
+    if (address != null) await ensureAddressPin(address);
+  })().catch((geoError) =>
+    console.log("MFB-error-logs ~ order placed ~ address geo ~", geoError.message)
+  );
 
   // Tell the vendor to start cooking and admin staff that an order landed.
   // Previously this only ran when an admin changed an order's status, which
