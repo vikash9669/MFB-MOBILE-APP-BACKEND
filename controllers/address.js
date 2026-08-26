@@ -1,11 +1,15 @@
 const { Op } = require("sequelize");
-const { Location, Address } = require("../models");
+const { Location, Address, StoreOrders } = require("../models");
 const {
   geoReady,
   addressAttributes,
   writableFields,
   stripGeo,
 } = require("../util/addressColumns");
+const { isAddressOnTheWay } = require("../util/orderTracking");
+
+const ON_THE_WAY_ERROR =
+  "This address can't be changed — a delivery is currently on its way to it.";
 
 // Defaults the table has always been given for fields the app never collected.
 // 312601 / 29 is Nimbahera, Rajasthan — the original single-city assumption.
@@ -156,6 +160,9 @@ const updateAddress = async (req, res) => {
     if (address.customer_id !== req.user.user_id) {
       return res.status(403).json({ error: "Not your address" });
     }
+    if (await isAddressOnTheWay(StoreOrders, req.user.user_id, delivery_id)) {
+      return res.status(409).json({ error: ON_THE_WAY_ERROR });
+    }
 
     const incoming = await stripGeo(fromBody(req.body));
 
@@ -192,14 +199,21 @@ const deleteAddress = async (req, res) => {
   const { delivery_id } = req.params;
 
   try {
-    // Scoped to the caller for the same reason update is.
-    const removed = await Address.destroy({
+    // Looked up first (rather than a bare scoped destroy) so a delivery in
+    // progress can block the delete before anything is removed.
+    const address = await Address.findOne({
       where: { delivery_id, customer_id: req.user.user_id },
+      attributes: ["delivery_id", "customer_id"],
     });
 
-    if (removed === 0) {
+    if (!address) {
       return res.status(404).json({ error: "Address not found" });
     }
+    if (await isAddressOnTheWay(StoreOrders, req.user.user_id, delivery_id)) {
+      return res.status(409).json({ error: ON_THE_WAY_ERROR });
+    }
+
+    await address.destroy();
 
     res.status(200).json({ message: "Address deleted successfully" });
   } catch (error) {

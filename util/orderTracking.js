@@ -16,6 +16,8 @@
 // vendor states a prep time on accept (order_prep_minutes) and dispatch records
 // distance, the estimate can be built from things that are true.
 
+const { QueryTypes } = require("sequelize");
+const sequelize = require("./database");
 const { haversineKm } = require("./geo");
 
 // Stage ids. Strings rather than numbers: they show up in logs and API
@@ -228,6 +230,53 @@ function buildTracking({ order, job, partner, riderUser }) {
   };
 }
 
+/**
+ * The delivery job behind an order, with whatever dispatch columns exist.
+ *
+ * Raw SQL and a column probe rather than the model, for the reason documented
+ * in util/dispatch/columns.js: naming dispatch_state on the model would put it
+ * in every SELECT and break all of them until the migration runs.
+ */
+async function loadTrackingJob(orderId) {
+  const { dispatchReady } = require("./dispatch/columns");
+  const extra = (await dispatchReady()) ? ", `dispatch_state`, `dispatch_note`" : "";
+
+  const [job] = await sequelize.query(
+    `SELECT \`do_id\`, \`status\`, \`dp_id\`, \`drop_otp\`, \`distance_km\`,
+            \`pickup_lat\`, \`pickup_lng\`, \`pickup_name\`,
+            \`drop_lat\`, \`drop_lng\`, \`picked_up_at\`, \`accepted_at\`${extra}
+       FROM \`store_delivery_orders\`
+      WHERE \`source_order_id\` = :orderId
+      ORDER BY \`do_id\` DESC LIMIT 1`,
+    { replacements: { orderId }, type: QueryTypes.SELECT }
+  );
+  return job ?? null;
+}
+
+/**
+ * Whether a customer currently has a non-terminal order out for delivery to a
+ * given address — the same "on the way" moment resolveStage reports on the
+ * tracking screen, not the raw order_status column, which lags behind the
+ * dispatch job (see resolveStage's own comment). Used to stop an address being
+ * edited or deleted out from under a rider already en route to it.
+ */
+async function isAddressOnTheWay(StoreOrders, customerId, addressId, loadJob = loadTrackingJob) {
+  const { Op } = require("sequelize");
+  const candidates = await StoreOrders.findAll({
+    attributes: ["order_id", "order_status"],
+    where: {
+      customer_id: customerId,
+      address_id: addressId,
+      order_status: { [Op.notIn]: [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED] },
+    },
+  });
+  for (const order of candidates) {
+    const job = await loadJob(order.order_id);
+    if (resolveStage(order, job) === STAGE.ON_THE_WAY) return true;
+  }
+  return false;
+}
+
 module.exports = {
   STAGE,
   STAGE_SEQUENCE,
@@ -237,4 +286,6 @@ module.exports = {
   headline,
   buildTracking,
   travelMinutes,
+  loadTrackingJob,
+  isAddressOnTheWay,
 };

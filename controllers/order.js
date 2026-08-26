@@ -1,6 +1,6 @@
 const { Op, QueryTypes } = require("sequelize");
 const sequelize = require("../util/database");
-const { buildTracking } = require("../util/orderTracking");
+const { buildTracking, loadTrackingJob } = require("../util/orderTracking");
 const { ratingForDelivery } = require("../util/ratings");
 const { ratingsReady } = require("../util/ratingColumns");
 const {
@@ -19,29 +19,6 @@ const {
   runPostOrderSideEffects,
   PAYMENT_COLUMNS,
 } = require("../util/orders");
-
-/**
- * The delivery job behind an order, with whatever dispatch columns exist.
- *
- * Raw SQL and a column probe rather than the model, for the reason documented
- * in util/dispatch/columns.js: naming dispatch_state on the model would put it
- * in every SELECT and break all of them until the migration runs.
- */
-async function loadTrackingJob(orderId) {
-  const { dispatchReady } = require("../util/dispatch/columns");
-  const extra = (await dispatchReady()) ? ", `dispatch_state`, `dispatch_note`" : "";
-
-  const [job] = await sequelize.query(
-    `SELECT \`do_id\`, \`status\`, \`dp_id\`, \`drop_otp\`, \`distance_km\`,
-            \`pickup_lat\`, \`pickup_lng\`, \`pickup_name\`,
-            \`drop_lat\`, \`drop_lng\`, \`picked_up_at\`, \`accepted_at\`${extra}
-       FROM \`store_delivery_orders\`
-      WHERE \`source_order_id\` = :orderId
-      ORDER BY \`do_id\` DESC LIMIT 1`,
-    { replacements: { orderId }, type: QueryTypes.SELECT }
-  );
-  return job ?? null;
-}
 
 /**
  * Lifecycle columns the order model deliberately does not name.
