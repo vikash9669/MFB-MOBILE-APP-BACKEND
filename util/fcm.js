@@ -140,7 +140,14 @@ function buildMessage(token, message, dataPayload) {
   return {
     message: {
       token,
-      notification: { title: message.title, body: message.body },
+      notification: {
+        title: message.title,
+        body: message.body,
+        // Optional big-picture image (promo campaigns). Android and iOS both
+        // render this themselves from the notification block — no client code
+        // needed, same as the title/body above.
+        ...(message.image ? { image: message.image } : {}),
+      },
       data: dataPayload,
       // No channel_id: use FCM's auto-created default channel so
       // notifications always display without the app pre-registering one.
@@ -154,8 +161,9 @@ function buildMessage(token, message, dataPayload) {
 // (partners have only a handful of devices). Returns the tokens FCM rejected as
 // permanently dead so the caller can prune them.
 //
-// message: { title, body, data? }  — data values are coerced to strings (FCM
-// requires string values in the data payload).
+// message: { title, body, image?, data? }  — data values are coerced to
+// strings (FCM requires string values in the data payload). `image` must be a
+// publicly reachable https URL; omitted entirely when absent.
 const sendToTokens = async (tokens, message) => {
   const dead = [];
   if (!isConfigured() || !Array.isArray(tokens) || tokens.length === 0) {

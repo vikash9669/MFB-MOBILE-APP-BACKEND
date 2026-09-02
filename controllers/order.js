@@ -79,16 +79,26 @@ async function orderEndpoints(order, job, businessName) {
     if (pin) pickup = { lat: pin.lat, lng: pin.lng, name: businessName || null };
   }
 
-  if (drop == null && order?.address_id != null) {
+  // Label + formatted address for the drop pin, read from the saved address
+  // regardless of whether the coordinates above already came from the
+  // delivery job — a dispatched job's drop_lat/lng is just a copy of this
+  // same address and carries no label of its own, so without this a
+  // dispatched order's drop pin would go unlabelled while an undispatched
+  // one's would not.
+  if (order?.address_id != null) {
     const { geoReady } = require("../util/addressColumns");
     if (await geoReady()) {
       const [row] = await sequelize.query(
-        "SELECT `delivery_lat`, `delivery_lng` FROM `store_users_shipping_address` " +
-          "WHERE `address_id` = :id LIMIT 1",
+        "SELECT `delivery_lat`, `delivery_lng`, `delivery_label`, `delivery_formatted` " +
+          "FROM `store_users_shipping_address` WHERE `delivery_id` = :id LIMIT 1",
         { replacements: { id: order.address_id }, type: QueryTypes.SELECT }
       );
-      if (row?.delivery_lat != null && row?.delivery_lng != null) {
+      if (drop == null && row?.delivery_lat != null && row?.delivery_lng != null) {
         drop = { lat: Number(row.delivery_lat), lng: Number(row.delivery_lng) };
+      }
+      if (drop != null && row != null) {
+        drop.name = row.delivery_label || "Delivery address";
+        drop.formatted = row.delivery_formatted || null;
       }
     }
   }
@@ -495,6 +505,7 @@ const createOrder = async (req, res) => {
       business_user_id,
       coupon_code,
       platform,
+      user_id,
     });
 
     const newOrder = await createOrderRow({
@@ -527,15 +538,18 @@ const createOrder = async (req, res) => {
   }
 };
 
-const getCouponCodeDiscountDetails = (req, res) => {
-  const { code, order_amount, platform } = req.body;
-  res.status(200).json(
-    getCouponCodeDetails({
-      code,
-      orderAmount: Number(order_amount),
-      platform,
-    })
-  );
+// Public preview — no req.user here (see util/coupon.js's note on why
+// usage-limit enforcement happens only at order creation, not here).
+const getCouponCodeDiscountDetails = async (req, res) => {
+  const { code, order_amount, platform, business_user_id, product_ids } = req.body;
+  const result = await getCouponCodeDetails({
+    code,
+    orderAmount: Number(order_amount),
+    platform,
+    businessUserId: business_user_id,
+    productIds: Array.isArray(product_ids) ? product_ids : undefined,
+  });
+  res.status(200).json(result);
 };
 
 module.exports = {

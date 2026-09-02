@@ -6,10 +6,10 @@ const {
   writableFields,
   stripGeo,
 } = require("../util/addressColumns");
-const { isAddressOnTheWay } = require("../util/orderTracking");
+const { isAddressLocked } = require("../util/orderTracking");
 
-const ON_THE_WAY_ERROR =
-  "This address can't be changed — a delivery is currently on its way to it.";
+const ADDRESS_LOCKED_ERROR =
+  "This address can't be changed — it has an order that's been placed but not yet delivered.";
 
 // Defaults the table has always been given for fields the app never collected.
 // 312601 / 29 is Nimbahera, Rajasthan — the original single-city assumption.
@@ -160,8 +160,8 @@ const updateAddress = async (req, res) => {
     if (address.customer_id !== req.user.user_id) {
       return res.status(403).json({ error: "Not your address" });
     }
-    if (await isAddressOnTheWay(StoreOrders, req.user.user_id, delivery_id)) {
-      return res.status(409).json({ error: ON_THE_WAY_ERROR });
+    if (await isAddressLocked(StoreOrders, req.user.user_id, delivery_id)) {
+      return res.status(409).json({ error: ADDRESS_LOCKED_ERROR });
     }
 
     const incoming = await stripGeo(fromBody(req.body));
@@ -209,8 +209,8 @@ const deleteAddress = async (req, res) => {
     if (!address) {
       return res.status(404).json({ error: "Address not found" });
     }
-    if (await isAddressOnTheWay(StoreOrders, req.user.user_id, delivery_id)) {
-      return res.status(409).json({ error: ON_THE_WAY_ERROR });
+    if (await isAddressLocked(StoreOrders, req.user.user_id, delivery_id)) {
+      return res.status(409).json({ error: ADDRESS_LOCKED_ERROR });
     }
 
     await address.destroy();

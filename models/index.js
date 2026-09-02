@@ -27,6 +27,9 @@ const PaymentIntent = require("./payment_intent");
 const Category = require("./category");
 const UserBank = require("./user_bank");
 const Cashback = require("./cashback");
+const PromoCampaign = require("./promo_campaign");
+const PromoTarget = require("./promo_target");
+const PromoRedemption = require("./promo_redemption");
 
 Business.hasMany(Menu, {
   foreignKey: "menu_user_id",
@@ -155,6 +158,13 @@ UserNotification.belongsTo(User, { foreignKey: "user_id", targetKey: "user_id" }
 User.hasMany(PaymentIntent, { foreignKey: "customer_id", sourceKey: "user_id", as: "payment_intents" });
 PaymentIntent.belongsTo(User, { foreignKey: "customer_id", targetKey: "user_id" });
 
+// ── Promo campaigns (admin-composed offer/announcement pushes) ──────────
+PromoCampaign.hasMany(PromoTarget, { foreignKey: "campaign_id", sourceKey: "campaign_id", as: "targets" });
+PromoTarget.belongsTo(PromoCampaign, { foreignKey: "campaign_id", targetKey: "campaign_id" });
+
+PromoCampaign.hasMany(PromoRedemption, { foreignKey: "campaign_id", sourceKey: "campaign_id", as: "redemptions" });
+PromoRedemption.belongsTo(PromoCampaign, { foreignKey: "campaign_id", targetKey: "campaign_id" });
+
 module.exports = {
   User,
   Product,
@@ -185,4 +195,7 @@ module.exports = {
   Category,
   UserBank,
   Cashback,
+  PromoCampaign,
+  PromoTarget,
+  PromoRedemption,
 };

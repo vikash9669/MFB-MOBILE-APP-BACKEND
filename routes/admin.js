@@ -34,6 +34,7 @@ const deliveryAdmin = require("../controllers/deliveryAdmin");
 const panelShifts = require("../controllers/admin/shifts");
 const realtime = require("../controllers/admin/realtime");
 const adminNotifications = require("../controllers/admin/notifications");
+const promos = require("../controllers/admin/promos");
 const {
   loginPerAccount,
   loginPerIp,
@@ -230,6 +231,16 @@ router.get("/banners", settings.list);
 router.post("/banners", settings.create);
 router.put("/banners/:id", settings.update);
 router.delete("/banners/:id", settings.remove);
+
+// Promotional push campaigns. /product-options must precede /:id or
+// "product-options" is read as a campaign id.
+router.get("/promos/product-options", promos.productOptions);
+router.get("/promos", promos.list);
+router.post("/promos", promos.create);
+router.get("/promos/:id", promos.detail);
+router.put("/promos/:id", promos.update);
+router.post("/promos/:id/cancel", promos.cancel);
+router.delete("/promos/:id", promos.remove);
 
 // User management. /locations sits above /:id so it isn't read as an id.
 router.get("/users/locations", users.locations);

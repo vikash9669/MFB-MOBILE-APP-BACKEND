@@ -27,7 +27,7 @@ const UPLOAD_ROOT =
 
 // The kinds the PHP app uses; anything else is rejected so a request can't
 // write outside these directories.
-const KINDS = ["products", "menu", "users", "vendors", "banners", "cuisiness"];
+const KINDS = ["products", "menu", "users", "vendors", "banners", "cuisiness", "promos"];
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const MIME_EXT = {

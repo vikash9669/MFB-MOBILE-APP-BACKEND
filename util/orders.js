@@ -8,6 +8,7 @@ const {
   Address,
   Area,
   User,
+  PromoRedemption,
 } = require("../models");
 const { getCouponCodeDetails } = require("./coupon");
 const { notifyUser } = require("./customerNotify");
@@ -25,6 +26,11 @@ const priceCart = async ({
   business_user_id,
   coupon_code,
   platform,
+  // Only ever available from authenticated order-creation call sites
+  // (controllers/order.js::createOrder, controllers/payment.js::payOnline) —
+  // see util/coupon.js's own note on why usage-limit enforcement lives here
+  // and not on the public /coupon preview.
+  user_id,
 }) => {
   const product_ids = Object.keys(product_ids_with_quantity);
 
@@ -68,10 +74,13 @@ const priceCart = async ({
   const rainCharges =
     business.business_rain_charges > 0 ? business.business_rain_charges : 0;
 
-  const couponCodeDetails = getCouponCodeDetails({
+  const couponCodeDetails = await getCouponCodeDetails({
     code: coupon_code,
     orderAmount,
     platform,
+    businessUserId: business_user_id,
+    productIds: product_ids,
+    userId: user_id,
   });
 
   const delivery_charges =
@@ -97,6 +106,10 @@ const priceCart = async ({
     order_discount,
     delivery_charges,
     payable,
+    // Set only when order_discount/free delivery came from a real promo
+    // campaign (not the legacy hardcoded FLASH50) — createOrder uses this to
+    // record a redemption. See util/coupon.js.
+    campaignId: couponCodeDetails.campaignId ?? null,
   };
 };
 
@@ -194,6 +207,22 @@ const createOrder = async ({
     });
   }
 
+  // Records that this order used a promo code, for usage_limit_per_user
+  // (util/coupon.js). Never allowed to fail order creation — a missed
+  // redemption row just means a usage-limit undercount, not a broken order.
+  if (pricing.campaignId != null) {
+    try {
+      await PromoRedemption.create({
+        campaign_id: pricing.campaignId,
+        user_id,
+        order_id: newOrder.order_id,
+        discount_amount: pricing.order_discount,
+      });
+    } catch (err) {
+      console.log("MFB-error-logs ~ createOrder promo redemption ~ err:", err.message);
+    }
+  }
+
   return newOrder;
 };
 
@@ -206,7 +235,31 @@ const findOrderById = (order_id) =>
 
 // Best-effort post-order side effects. Never allowed to fail an order that is
 // already committed (and, for PG, already paid for).
+//
+// Every call site awaits this — it used to run its whole chain (an external
+// email API with a 10s timeout, then two sequential SMTP sends inside
+// notifyOrderReceived, then the delivery job) before responding, so both the
+// COD "place order" call and the online "payment confirm" poll sat blocked on
+// a slow or unresponsive mail server for several seconds on every checkout.
+// None of that has to happen before the customer hears their order was
+// created, so the whole chain now runs in the background: this function
+// itself returns as soon as it has kicked that work off, and each caller's
+// response goes out immediately.
 const runPostOrderSideEffects = async ({ user_id, order_id, total_amount }) => {
+  runPostOrderSideEffectsInBackground({ user_id, order_id, total_amount }).catch(
+    (err) =>
+      console.log(
+        "MFB-error-logs ~ order placed ~ post-order side effects ~",
+        err.message
+      )
+  );
+};
+
+const runPostOrderSideEffectsInBackground = async ({
+  user_id,
+  order_id,
+  total_amount,
+}) => {
   try {
     const userDetails = await User.findByPk(user_id, {
       attributes: ["user_name", "user_phone"],
@@ -242,9 +295,10 @@ const runPostOrderSideEffects = async ({ user_id, order_id, total_amount }) => {
   // from the map picker; the ones inherited from the PHP panel do not, and this
   // fills them in once, the first time somebody orders to them.
   //
-  // Deliberately NOT awaited. It costs a Google lookup and the customer is
-  // waiting on this response; the tracking screen polls, so a pin that lands a
-  // second later is indistinguishable from one that was already there.
+  // Deliberately not awaited even within this already-backgrounded chain: it
+  // costs a Google lookup, and the tracking screen polls, so a pin that lands
+  // a second later than the rest of this function is indistinguishable from
+  // one that was already there.
   //
   // `address` was never in scope here — this function is called with
   // { user_id, order_id, total_amount } and nothing else — so every order threw
@@ -252,8 +306,7 @@ const runPostOrderSideEffects = async ({ user_id, order_id, total_amount }) => {
   // geocode never ran once. That is why delivery addresses had no coordinates
   // and the tracking map had no destination to draw.
   //
-  // Loaded from the order instead, so no caller has to change. Fire-and-forget
-  // for the reason above: the customer is waiting on this response.
+  // Loaded from the order instead, so no caller has to change.
   void (async () => {
     const { ensureAddressPin } = require("./addressGeo");
     const placed = await StoreOrders.findByPk(order_id, { attributes: ["address_id"] });

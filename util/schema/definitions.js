@@ -374,6 +374,69 @@ const TABLES = [
   CONSTRAINT \`store_delivery_session_points_ibfk_1\` FOREIGN KEY (\`session_id\`) REFERENCES \`store_delivery_sessions\` (\`session_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   },
+  // ── Promotional push notifications (admin-composed, sent to all customers) ──
+  // See util/promoNotificationSweeper.js for the sender and util/coupon.js for
+  // how promo_code turns into an actual checkout discount.
+  {
+    name: "store_promo_campaigns",
+    ddl: `CREATE TABLE IF NOT EXISTS \`store_promo_campaigns\` (
+  \`campaign_id\` int NOT NULL AUTO_INCREMENT,
+  \`title\` varchar(160) NOT NULL,
+  \`body\` varchar(255) DEFAULT NULL,
+  \`image\` varchar(255) DEFAULT NULL,
+  \`offer_type\` enum('none','percent_off','flat_off','free_delivery') NOT NULL DEFAULT 'none',
+  \`offer_value\` decimal(10,2) DEFAULT NULL,
+  \`min_order_amount\` decimal(10,2) DEFAULT NULL,
+  \`promo_code\` varchar(24) DEFAULT NULL,
+  \`usage_limit_per_user\` smallint NOT NULL DEFAULT 1,
+  \`expires_at\` datetime DEFAULT NULL,
+  \`scheduled_at\` datetime NOT NULL,
+  \`sent_at\` datetime DEFAULT NULL,
+  \`status\` enum('draft','scheduled','sending','sent','cancelled','failed') NOT NULL DEFAULT 'draft',
+  \`target_count\` int NOT NULL DEFAULT 0,
+  \`sent_count\` int NOT NULL DEFAULT 0,
+  \`failed_count\` int NOT NULL DEFAULT 0,
+  \`created_by\` int DEFAULT NULL,
+  \`created_at\` datetime NOT NULL,
+  \`updated_at\` datetime NOT NULL,
+  PRIMARY KEY (\`campaign_id\`),
+  UNIQUE KEY \`promo_code_uniq\` (\`promo_code\`),
+  KEY \`promo_due_idx\` (\`status\`,\`scheduled_at\`),
+  CONSTRAINT \`store_promo_campaigns_ibfk_1\` FOREIGN KEY (\`created_by\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+  },
+  {
+    name: "store_promo_targets",
+    ddl: `CREATE TABLE IF NOT EXISTS \`store_promo_targets\` (
+  \`id\` int NOT NULL AUTO_INCREMENT,
+  \`campaign_id\` int NOT NULL,
+  \`business_user_id\` int DEFAULT NULL,
+  \`product_id\` int DEFAULT NULL,
+  PRIMARY KEY (\`id\`),
+  KEY \`promo_target_campaign_idx\` (\`campaign_id\`),
+  KEY \`promo_target_vendor_idx\` (\`business_user_id\`),
+  KEY \`promo_target_product_idx\` (\`product_id\`),
+  CONSTRAINT \`store_promo_targets_ibfk_1\` FOREIGN KEY (\`campaign_id\`) REFERENCES \`store_promo_campaigns\` (\`campaign_id\`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT \`store_promo_targets_ibfk_2\` FOREIGN KEY (\`business_user_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT \`store_promo_targets_ibfk_3\` FOREIGN KEY (\`product_id\`) REFERENCES \`store_products\` (\`product_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+  },
+  {
+    name: "store_promo_redemptions",
+    ddl: `CREATE TABLE IF NOT EXISTS \`store_promo_redemptions\` (
+  \`id\` int NOT NULL AUTO_INCREMENT,
+  \`campaign_id\` int NOT NULL,
+  \`user_id\` int NOT NULL,
+  \`order_id\` int DEFAULT NULL,
+  \`discount_amount\` decimal(10,2) NOT NULL DEFAULT 0.00,
+  \`created_at\` datetime NOT NULL,
+  PRIMARY KEY (\`id\`),
+  KEY \`promo_redemption_usage_idx\` (\`campaign_id\`,\`user_id\`),
+  KEY \`promo_redemption_order_idx\` (\`order_id\`),
+  CONSTRAINT \`store_promo_redemptions_ibfk_1\` FOREIGN KEY (\`campaign_id\`) REFERENCES \`store_promo_campaigns\` (\`campaign_id\`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT \`store_promo_redemptions_ibfk_2\` FOREIGN KEY (\`user_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+  },
 ];
 
 /**
@@ -467,6 +530,13 @@ const COLUMNS = [
   // can deep-link to the application. Nullable and ignored by every existing
   // reader — the customer feed selects named columns, not *.
   { table: "store_user_notifications", column: "ref_partner_id", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `ref_partner_id` INT NULL" },
+
+  // A promo campaign's deep-link target, carried on each customer's own
+  // notification row so tapping it from the in-app list (not just a live push)
+  // still knows where to go. See util/promoNotificationSweeper.js.
+  { table: "store_user_notifications", column: "image", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `image` VARCHAR(255) NULL" },
+  { table: "store_user_notifications", column: "ref_business_user_id", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `ref_business_user_id` INT NULL" },
+  { table: "store_user_notifications", column: "ref_promo_code", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `ref_promo_code` VARCHAR(24) NULL" },
 
 ];
 

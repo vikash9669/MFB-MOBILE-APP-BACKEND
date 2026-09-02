@@ -254,13 +254,29 @@ async function loadTrackingJob(orderId) {
 }
 
 /**
- * Whether a customer currently has a non-terminal order out for delivery to a
- * given address — the same "on the way" moment resolveStage reports on the
- * tracking screen, not the raw order_status column, which lags behind the
- * dispatch job (see resolveStage's own comment). Used to stop an address being
- * edited or deleted out from under a rider already en route to it.
+ * Whether a customer's address is locked against edit/delete right now —
+ * because it has an order that has been placed but not yet delivered.
+ *
+ * This used to only block once a rider was genuinely on the way — every
+ * earlier stage (placed, preparing, finding a rider) let the address through
+ * unguarded, so a customer could delete the address for an order that was
+ * still just sitting with the restaurant. The rule was always meant to be
+ * "placed but not delivered", not "already out for delivery": once a rider
+ * is dispatched they're the ones physically depending on the address not
+ * moving under them, but the record itself — and whatever a vendor or admin
+ * reads off the order — is just as real from the moment the order exists.
+ *
+ * Checked via resolveStage rather than the raw order_status column so a
+ * delivery job that already says "delivered" unlocks the address immediately
+ * even if order_status hasn't caught up yet (see resolveStage's own comment
+ * on that lag). The query below already excludes CANCELLED by raw status, so
+ * DECLINED shouldn't reach this loop — it's excluded here too anyway, rather
+ * than assumed, so this stays correct even if a caller's `StoreOrders` ever
+ * filters differently.
  */
-async function isAddressOnTheWay(StoreOrders, customerId, addressId, loadJob = loadTrackingJob) {
+const ADDRESS_UNLOCKED_STAGES = [STAGE.DELIVERED, STAGE.DECLINED];
+
+async function isAddressLocked(StoreOrders, customerId, addressId, loadJob = loadTrackingJob) {
   const { Op } = require("sequelize");
   const candidates = await StoreOrders.findAll({
     attributes: ["order_id", "order_status"],
@@ -272,7 +288,7 @@ async function isAddressOnTheWay(StoreOrders, customerId, addressId, loadJob = l
   });
   for (const order of candidates) {
     const job = await loadJob(order.order_id);
-    if (resolveStage(order, job) === STAGE.ON_THE_WAY) return true;
+    if (!ADDRESS_UNLOCKED_STAGES.includes(resolveStage(order, job))) return true;
   }
   return false;
 }
@@ -287,5 +303,5 @@ module.exports = {
   buildTracking,
   travelMinutes,
   loadTrackingJob,
-  isAddressOnTheWay,
+  isAddressLocked,
 };

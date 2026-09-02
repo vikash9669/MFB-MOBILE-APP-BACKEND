@@ -118,6 +118,7 @@ async function settleIntent(intent, providerTxnId, collectedAmount = null) {
         business_user_id: fresh.vendor_id,
         coupon_code: snapshot.coupon_code,
         platform: snapshot.platform,
+        user_id: fresh.customer_id,
       });
     }
 

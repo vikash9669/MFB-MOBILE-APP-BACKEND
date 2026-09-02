@@ -30,6 +30,11 @@ const UserNotification = sequelize.define(
     // Declared, not just added to the table: Sequelize builds its INSERT from
     // declared attributes, so an undeclared key is dropped without an error.
     ref_partner_id: { type: DataTypes.INTEGER, allowNull: true },
+    // A promo campaign's deep-link target and artwork — see
+    // util/promoNotificationSweeper.js and util/customerNotify.js::notifyUser.
+    image: { type: DataTypes.STRING(255), allowNull: true },
+    ref_business_user_id: { type: DataTypes.INTEGER, allowNull: true },
+    ref_promo_code: { type: DataTypes.STRING(24), allowNull: true },
     is_read: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: 0 },
     created_at: { type: DataTypes.DATE, allowNull: false, defaultValue: NOW },
   },

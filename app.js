@@ -13,6 +13,7 @@ const { startPaymentSweeper } = require("./util/paymentSweeper");
 const { startOrderAcceptSweeper } = require("./util/orderAcceptSweeper");
 const { startOrphanJobSweeper } = require("./util/orphanJobSweeper");
 const { startDispatchEngine } = require("./util/dispatch/engine");
+const { startPromoNotificationSweeper } = require("./util/promoNotificationSweeper");
 const bannerRoutes = require("./routes/banner");
 const deliveryAuthRoutes = require("./routes/deliveryAuth");
 const deliveryAdminRoutes = require("./routes/deliveryAdmin");
@@ -152,6 +153,9 @@ sequelize
     // Scores riders and offers accepted orders to them one at a time. Dormant
     // until migrations/2026-08-09-dispatch-engine.sql has run.
     startDispatchEngine();
+    // Sends admin-composed promo campaigns to every customer once their
+    // scheduled time arrives — see controllers/admin/promos.js.
+    startPromoNotificationSweeper();
     // 8080 stays the default so nothing that hardcodes it breaks; PORT exists so
     // a second instance can be run alongside for testing.
     const port = Number(process.env.PORT) || 8080;

@@ -12,6 +12,9 @@ const serializeNotif = (n) => ({
   title: n.title,
   body: n.body,
   order_id: n.ref_order_id,
+  image: n.image,
+  vendor_id: n.ref_business_user_id,
+  promo_code: n.ref_promo_code,
   is_read: !!n.is_read,
   created_at: n.created_at,
 });

@@ -76,6 +76,7 @@ const initiatePayment = async (req, res) => {
       business_user_id,
       coupon_code,
       platform,
+      user_id,
     });
 
     if (!(pricing.payable > 0)) {
@@ -113,6 +114,10 @@ const initiatePayment = async (req, res) => {
           order_discount: pricing.order_discount,
           delivery_charges: pricing.delivery_charges,
           payable: pricing.payable,
+          // Carried through to settlement so a redeemed promo still records
+          // its redemption row even though settlement never re-runs priceCart
+          // — see util/paymentSettlement.js and util/orders.js::createOrder.
+          campaignId: pricing.campaignId ?? null,
           productDetails: pricing.productDetails.map((p) => ({
             product_id: p.product_id,
             product_mrp: p.product_mrp,
