@@ -41,9 +41,27 @@ const pushToDevices = async (dpId, message) => {
     return;
   }
   const tokens = devices.map((d) => d.token);
-  const { dead } = await sendToTokens(tokens, message);
+  const { sent, dead } = await sendToTokens(tokens, message);
   if (dead.length) {
     await DeliveryDevice.destroy({ where: { dp_id: dpId, token: dead } });
+  }
+
+  // Say so when a partner ends up with nothing to push to.
+  //
+  // Pruning was silent, and silence here is indistinguishable from success: a
+  // rider whose every token had been dropped looked exactly like one whose
+  // phone was ringing. Chasing a "the app never rang" report meant reading the
+  // devices table by hand to discover there were no devices left to ring.
+  const remaining = devices.length - dead.length;
+  if (sent === 0) {
+    console.log(
+      `MFB ~ push ~ dp ${dpId}: nothing delivered ` +
+        `(${devices.length} token(s) tried, ${dead.length} dead, ${remaining} left)`
+    );
+  } else if (dead.length) {
+    console.log(
+      `MFB ~ push ~ dp ${dpId}: sent to ${sent}, pruned ${dead.length} dead token(s), ${remaining} left`
+    );
   }
 };
 

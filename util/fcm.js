@@ -166,7 +166,14 @@ function buildMessage(token, message, dataPayload) {
 // publicly reachable https URL; omitted entirely when absent.
 const sendToTokens = async (tokens, message) => {
   const dead = [];
-  if (!isConfigured() || !Array.isArray(tokens) || tokens.length === 0) {
+  if (!isConfigured()) {
+    // Was a silent no-op. An unconfigured deployment therefore looked exactly
+    // like a working one from every caller's point of view — every push
+    // "succeeded" and no device ever rang.
+    console.log("MFB ~ fcm ~ not configured, push skipped");
+    return { sent: 0, dead };
+  }
+  if (!Array.isArray(tokens) || tokens.length === 0) {
     return { sent: 0, dead };
   }
 

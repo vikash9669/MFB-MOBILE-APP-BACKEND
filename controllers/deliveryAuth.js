@@ -16,6 +16,65 @@ const DEFAULT_SETTINGS = {
   battery: false,
 };
 
+const SETTINGS_KEYS = Object.keys(DEFAULT_SETTINGS);
+
+// Coerces whatever the driver hands back for dp_settings into the five known
+// booleans.
+//
+// The model declares dp_settings as DataTypes.JSON but the physical column is
+// longtext (see util/schema/definitions.js), so mysql2 returns a raw *string*
+// and Sequelize never parses it. Spreading that string — the old
+// `{ ...partner.dp_settings }` — indexed it character by character into
+// { "0": "{", "1": "\"", ... }, which was written straight back to the column
+// and spread again on the next save. Every settings update multiplied the
+// value: one partner's blob reached 8.6KB.
+//
+// That mattered because partnerClaims embeds settings in the access token. The
+// bloated claim pushed the JWT to 17KB, past Node's 16KB max header size, so
+// the Authorization header never arrived intact and every authenticated
+// request died with "JsonWebTokenError: jwt malformed" — a 403 that looked
+// like a broken session rather than a corrupted column.
+//
+// Whitelisting the known keys bounds the value permanently: however mangled
+// the stored blob is, what comes back out is five booleans.
+const normalizeSettings = (raw) => {
+  let value = raw;
+  // Unwrap the layers of JSON-encoding and char-indexed corruption. Each saved
+  // generation costs two steps to undo — parse the string, then rejoin the
+  // char-indexed object it decodes to — so the cap allows for far more
+  // generations than any column has accumulated while staying strictly bounded.
+  for (let i = 0; i < 32 && value != null; i += 1) {
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        break;
+      }
+      continue;
+    }
+    const isCharIndexed =
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value["0"] !== undefined &&
+      value.notifications === undefined;
+    if (isCharIndexed) {
+      value = Object.keys(value)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => value[k])
+        .join("");
+      continue;
+    }
+    break;
+  }
+
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const out = {};
+  for (const key of SETTINGS_KEYS) {
+    out[key] = Boolean(source[key]);
+  }
+  return out;
+};
+
 // Builds the access-token payload (also returned to the client as `partner`).
 const partnerClaims = (partner) => ({
   dp_id: partner.dp_id,
@@ -25,7 +84,7 @@ const partnerClaims = (partner) => ({
   role: "delivery_partner",
   // So the app can route to the onboarding gate immediately after login.
   verification_status: partner.dp_verification_status || "pending",
-  settings: partner.dp_settings || DEFAULT_SETTINGS,
+  settings: normalizeSettings(partner.dp_settings),
 });
 
 // Issues a fresh access + refresh token pair for a partner. The refresh token
@@ -187,7 +246,12 @@ exports.updateSettings = async (req, res) => {
       return;
     }
 
-    const merged = { ...(partner.dp_settings || DEFAULT_SETTINGS), ...(settings || {}) };
+    // Normalised on both sides of the merge, so a column already holding a
+    // corrupted blob is repaired by the next save rather than compounded.
+    const merged = normalizeSettings({
+      ...normalizeSettings(partner.dp_settings),
+      ...(settings || {}),
+    });
     await partner.update({ dp_settings: merged });
 
     res.json({
@@ -200,3 +264,8 @@ exports.updateSettings = async (req, res) => {
     res.status(500).json({ message: "Settings update failed" });
   }
 };
+
+// Exported for tests: pure, and the corruption it repairs is worth pinning
+// down without standing up a database to reproduce it.
+module.exports._normalizeSettings = normalizeSettings;
+module.exports._partnerClaims = partnerClaims;
