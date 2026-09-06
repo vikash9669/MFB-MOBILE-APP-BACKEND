@@ -325,6 +325,35 @@ async function scheduleForSourceOrder(sourceOrderId, { prepMinutes, acceptedAt }
  * Best-effort and never throws: a vendor's status change must succeed even if
  * dispatch cannot.
  */
+/**
+ * Tells the rider who already holds this job that the food is ready.
+ *
+ * The companion to dispatchNowForSourceOrder, which deliberately only looks at
+ * jobs nobody has taken. A rider who accepted while the kitchen was still
+ * cooking is in the opposite position: they have the job and no idea when to
+ * walk in for it. Only 'accepted' qualifies — 'picked_up' means they already
+ * have the bag, and telling them it is ready then is noise.
+ *
+ * Never throws; a vendor's status change must not depend on it.
+ */
+async function notifyAssignedRiderReady(sourceOrderId) {
+  try {
+    const job = await DeliveryOrder.findOne({
+      where: { source_order_id: sourceOrderId, status: "accepted" },
+      attributes: ["do_id", "dp_id"],
+      raw: true,
+    });
+    if (job == null || job.dp_id == null) return null;
+
+    const riderNotify = require("./riderNotify");
+    await riderNotify.orderPrepared(job.do_id);
+    return job.do_id;
+  } catch (err) {
+    console.log("MFB-error-logs ~ dispatch ~ notifyAssignedRiderReady ~", err.message);
+    return null;
+  }
+}
+
 async function dispatchNowForSourceOrder(sourceOrderId) {
   try {
     if (!(await dispatchReady())) return null;
@@ -376,5 +405,6 @@ module.exports = {
   queueDeliveryJob,
   scheduleForSourceOrder,
   dispatchNowForSourceOrder,
+  notifyAssignedRiderReady,
   computeEarnings,
 };

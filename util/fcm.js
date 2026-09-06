@@ -101,6 +101,48 @@ const isDeadTokenError = (status, body) => {
  * already gone to somebody else.
  */
 function buildMessage(token, message, dataPayload) {
+  // rich — DATA-ONLY, like `call`, but not a ringing takeover.
+  //
+  // The third shape, and it exists for the same reason `call` does: Android
+  // renders a `notification` block itself, and a notification Android drew
+  // cannot carry action buttons the app defines, a big-picture image the app
+  // chose, or a tap target the app routes. The delivery app already renders
+  // its own notifications through Notifee, so sending these as pure data lets
+  // a rider act on one — open the delivery, navigate — straight from the
+  // shade, instead of the whole notification being a single tap target.
+  //
+  // No short TTL here: unlike an offer, "your account is approved" or "the
+  // food is ready" is still worth reading a few minutes late.
+  if (message.rich) {
+    return {
+      message: {
+        token,
+        data: {
+          ...dataPayload,
+          title: String(message.title ?? ""),
+          body: String(message.body ?? ""),
+          rich: "1",
+          ...(message.image ? { image: String(message.image) } : {}),
+          ...(message.route ? { route: String(message.route) } : {}),
+          ...(message.actions ? { actions: JSON.stringify(message.actions) } : {}),
+        },
+        android: { priority: "high" },
+        apns: {
+          headers: { "apns-priority": "10", "apns-push-type": "alert" },
+          // iOS has no Notifee-equivalent takeover for a data push, so it gets
+          // an ordinary alert with the same words.
+          payload: {
+            aps: {
+              alert: { title: message.title, body: message.body },
+              sound: "default",
+              "content-available": 1,
+            },
+          },
+        },
+      },
+    };
+  }
+
   if (message.call) {
     return {
       message: {

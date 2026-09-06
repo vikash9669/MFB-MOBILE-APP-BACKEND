@@ -14,6 +14,7 @@ const { startOrderAcceptSweeper } = require("./util/orderAcceptSweeper");
 const { startOrphanJobSweeper } = require("./util/orphanJobSweeper");
 const { startDispatchEngine } = require("./util/dispatch/engine");
 const { startPromoNotificationSweeper } = require("./util/promoNotificationSweeper");
+const { startRiderLocationSweeper } = require("./util/riderLocationSweeper");
 const bannerRoutes = require("./routes/banner");
 const deliveryAuthRoutes = require("./routes/deliveryAuth");
 const deliveryAdminRoutes = require("./routes/deliveryAdmin");
@@ -156,6 +157,10 @@ sequelize
     // Sends admin-composed promo campaigns to every customer once their
     // scheduled time arrives — see controllers/admin/promos.js.
     startPromoNotificationSweeper();
+    // Nudges riders who are marked online but whose phone has stopped
+    // reporting a location — the case the app's own alert cannot cover,
+    // because the app is no longer running. See util/riderLocationSweeper.js.
+    startRiderLocationSweeper();
     // 8080 stays the default so nothing that hardcodes it breaks; PORT exists so
     // a second instance can be run alongside for testing.
     const port = Number(process.env.PORT) || 8080;

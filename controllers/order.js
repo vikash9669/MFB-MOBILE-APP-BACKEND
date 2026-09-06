@@ -241,7 +241,13 @@ const getActiveOrders = async (req, res) => {
       });
       return;
     }
+    // Scoped, deliberately. This row goes out to the customer in the response
+    // below, and store_users holds user_password — an unscoped findOne put the
+    // panel rider's password hash into the tracking payload of every customer
+    // whose order had one assigned. The screen only ever needed a name and a
+    // number.
     const rider = await User.findOne({
+      attributes: ["user_id", "user_name", "user_phone", "user_phone_1"],
       where: {
         user_id: order.rider_id,
       },
@@ -276,7 +282,10 @@ const getActiveOrders = async (req, res) => {
       if (job?.dp_id != null) {
         const { DeliveryPartner } = require("../models");
         partner = await DeliveryPartner.findByPk(job.dp_id, {
-          attributes: ["dp_id", "dp_name", "dp_lat", "dp_lng"],
+          // dp_phone so the customer can call the person carrying their food.
+          // buildTracking decides whether it is actually released — it is not
+          // handed out before the rider holds the order, or after delivery.
+          attributes: ["dp_id", "dp_name", "dp_phone", "dp_lat", "dp_lng"],
           raw: true,
         });
       }

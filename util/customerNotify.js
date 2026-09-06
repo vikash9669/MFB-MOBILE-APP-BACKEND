@@ -16,9 +16,31 @@ const { sendToTokens } = require("./fcm");
 // tray, and the two ref fields let the in-app notification list deep-link into
 // the right restaurant with the code pre-filled even long after the original
 // push's data payload is gone (see Screens/NotificationsScreen.js).
+// `refStage` is the order-journey moment this notification marks (placed,
+// preparing, assigned, picked_up, arriving, delivered — see
+// util/orderCustomerNotify.js).
+//
+// It rides in the PUSH payload only; it is deliberately not a column. Adding
+// ref_stage to the model would name it in every SELECT and every INSERT, and
+// break all of them on a database where the migration has not run — the trap
+// util/dispatch/columns.js documents. The cost is that a tap on a row in the
+// in-app centre cannot tell the delivered notification from the others, so it
+// opens the tracking screen at the top rather than at the rating card. A tap on
+// the notification itself, which is how this is actually used, still does.
 const notifyUser = async (
   userId,
-  { category, icon, title, body, data, refOrderId, image, refBusinessUserId, refPromoCode } = {}
+  {
+    category,
+    icon,
+    title,
+    body,
+    data,
+    refOrderId,
+    image,
+    refBusinessUserId,
+    refPromoCode,
+    refStage,
+  } = {}
 ) => {
   const notif = await UserNotification.create({
     user_id: userId,
@@ -44,6 +66,7 @@ const notifyUser = async (
       ...(refOrderId ? { order_id: refOrderId } : {}),
       ...(refBusinessUserId ? { vendor_id: refBusinessUserId } : {}),
       ...(refPromoCode ? { promo_code: refPromoCode } : {}),
+      ...(refStage ? { stage: refStage } : {}),
     },
   }).catch((err) => console.log("MFB-error-logs ~ notifyUser push ~ err:", err.message));
 

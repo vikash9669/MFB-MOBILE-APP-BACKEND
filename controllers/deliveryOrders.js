@@ -12,6 +12,8 @@ const {
 } = require("../util/delivery");
 const { haversineKm, directions } = require("../util/geo");
 const { notifyPartner } = require("../util/deliveryNotify");
+const orderCustomerNotify = require("../util/orderCustomerNotify");
+const riderNotify = require("../util/riderNotify");
 const { QueryTypes } = require("sequelize");
 const sequelize = require("../util/database");
 const { dispatchReady } = require("../util/dispatch/columns");
@@ -304,6 +306,13 @@ exports.accept = async (req, res) => {
       data: { type: "order_assigned", do_id: order.do_id },
     });
 
+    // The customer's half of the same moment. Until now only the rider heard
+    // anything from accept onwards, so the person waiting for the food learned
+    // nothing between "being prepared" and it turning up at the door.
+    orderCustomerNotify
+      .riderAssigned(order.source_order_id, req.user?.dp_name)
+      .catch(() => {});
+
     // Text the customer their door code. It is shown in the app too, but the
     // app is exactly what a customer may not have open when the rider arrives —
     // and without the code the food cannot be handed over. Fire-and-forget:
@@ -542,6 +551,10 @@ exports.verifyPickup = async (req, res) => {
       data: { type: "order_picked_up", do_id: order.do_id },
     });
 
+    orderCustomerNotify
+      .orderPickedUp(order.source_order_id, req.user?.dp_name)
+      .catch(() => {});
+
     res.json({ message: "Pickup confirmed", order: serializeOrder(order) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery verifyPickup ~ err:", err);
@@ -603,13 +616,19 @@ exports.verifyDelivery = async (req, res) => {
     await partner.reload();
 
     // Earnings alert for this delivery.
-    await notifyPartner(dpId, {
-      category: "payments",
-      icon: "payments",
-      title: `Earned ₹${num(order.earn_total)} · Order #${order.order_ref}`,
-      body: "Delivery completed. Earnings added to your wallet.",
-      data: { type: "order_delivered", do_id: order.do_id },
-    });
+    //
+    // Sent from riderNotify so it can say what happened to the MONEY as well
+    // as the earning: on a COD job the cash the rider is now carrying is owed
+    // back and gates whether they get offered more work, which a bare
+    // "Earned ₹X" never mentioned.
+    await riderNotify.orderDelivered(order.do_id);
+
+    // The customer's side: the meal is here, and this is the one moment a
+    // request to rate the rider is actually welcome. Deep-links straight to
+    // the rating card rather than the top of the tracking screen.
+    orderCustomerNotify
+      .orderDelivered(order.source_order_id, req.user?.dp_name)
+      .catch(() => {});
 
     // Congratulate when today's deliveries cross the incentive target.
     const todayStart = new Date();

@@ -27,7 +27,30 @@ const sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER_NAME, p
     port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
     dialect: "mysql",
     timezone: process.env.DB_TIMEZONE || "+05:30",
-    logging: false
+    logging: false,
+    // POOL — this is about a hosting quota, not about throughput.
+    //
+    // Sequelize defaults to min:0 / idle:10s, which closes every connection
+    // after ten idle seconds and opens a fresh one on the next query. That is
+    // ordinarily harmless. Here it is not: the Hostinger account is capped at
+    // max_connections_per_hour=500, and the dispatch engine alone ticks every
+    // five seconds — ~720 ticks an hour, each one arriving after the pool has
+    // gone idle and so each one paying for a brand-new connection. Add five
+    // more sweepers and the cap is reached well before the hour is out, at
+    // which point EVERY query fails with "has exceeded the
+    // 'max_connections_per_hour' resource" until the counter rolls over. That
+    // has taken this backend down more than once, and it reads as a database
+    // outage rather than as a quota.
+    //
+    // Holding one connection open costs nothing and takes the steady-state
+    // reconnect rate to roughly zero.
+    pool: {
+      max: Number(process.env.DB_POOL_MAX || 5),
+      min: Number(process.env.DB_POOL_MIN || 1),
+      idle: Number(process.env.DB_POOL_IDLE_MS || 300000),
+      acquire: Number(process.env.DB_POOL_ACQUIRE_MS || 60000),
+      evict: Number(process.env.DB_POOL_EVICT_MS || 60000),
+    },
 });
 
 module.exports = sequelize;

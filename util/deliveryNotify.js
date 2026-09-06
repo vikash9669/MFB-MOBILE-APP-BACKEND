@@ -10,7 +10,15 @@ const { DeliveryNotification, DeliveryDevice } = require("../models");
 const { sendToTokens } = require("./fcm");
 
 // Creates the notification row, then fans out a push. Returns the created row.
-const notifyPartner = async (dpId, { category, icon, title, body, data, call, ttlSec } = {}) => {
+// `rich` renders the notification in the app through Notifee instead of
+// letting Android draw it, which is what makes `image`, `actions` and `route`
+// possible at all — see util/fcm.js. `call` still wins where both are set: an
+// expiring offer has to ring, and a ringing notification is already
+// Notifee-rendered.
+const notifyPartner = async (
+  dpId,
+  { category, icon, title, body, data, call, ttlSec, rich, image, actions, route } = {}
+) => {
   const notif = await DeliveryNotification.create({
     dp_id: dpId,
     category: category || "system",
@@ -27,6 +35,10 @@ const notifyPartner = async (dpId, { category, icon, title, body, data, call, tt
     title,
     body: body || "",
     call: Boolean(call),
+    rich: Boolean(rich) && !call,
+    image: image || undefined,
+    actions: actions || undefined,
+    route: route || undefined,
     ttlSec,
     data: { ...(data || {}), notif_id: notif.notif_id, category: category || "system" },
   }).catch((err) => console.log("MFB-error-logs ~ notifyPartner push ~ err:", err.message));

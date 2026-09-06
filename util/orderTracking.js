@@ -69,6 +69,25 @@ const travelMinutes = (km) =>
   km == null ? null : Math.max(1, Math.round((km / RIDER_KMH) * 60));
 
 /**
+ * A number worth putting a call button on, or null.
+ *
+ * Everything here is a placeholder in practice: store_users.user_phone_1 is
+ * NOT NULL with a default of 0, so plenty of rows carry "0" or "" rather than a
+ * number. Handing one of those to the app produces a call button that opens the
+ * dialler on nothing, which reads to the customer as "the rider won't pick up"
+ * rather than "there was never a number here".
+ *
+ * Ten digits after punctuation, with a country code tolerated and dropped —
+ * `tel:` handles a bare 10-digit Indian mobile fine, and storing the two forms
+ * interchangeably is exactly what these columns already do.
+ */
+const callablePhone = (raw) => {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  const ten = digits.length > 10 ? digits.slice(-10) : digits;
+  return ten.length === 10 ? ten : null;
+};
+
+/**
  * Which of the five moments this order is in.
  *
  * Order matters: the dead ends are checked first, because a cancelled order
@@ -226,8 +245,48 @@ function buildTracking({ order, job, partner, riderUser }) {
     // order. Before pickup it tells the customer nothing useful, and after
     // delivery it is somebody's location for no reason.
     rider_point: stage === STAGE.ON_THE_WAY ? riderPoint : null,
+    rider: riderContact({ stage, partner, riderUser }),
     is_terminal: stage === STAGE.DELIVERED || stage === STAGE.DECLINED,
   };
+}
+
+/**
+ * Who is bringing the order, and how to reach them.
+ *
+ * The name and the number have deliberately different lifetimes. The name
+ * outlives the delivery because the rating card afterwards asks how a *person*
+ * did, and "how was your delivery partner?" is a worse question. The number
+ * does not outlive it: it is a real mobile belonging to a real rider, and once
+ * the food is at the door there is no reason a customer can still ring them.
+ * Same rule rider_point above already follows, for the same reason.
+ *
+ * Nothing at all before a rider actually holds the order — during
+ * finding_rider there is either no one assigned or someone who has not agreed
+ * yet, and showing a number then invites a call about a job nobody accepted.
+ *
+ * Two sources because there are two ways an order gets a rider: the dispatch
+ * engine assigns a DeliveryPartner (the app rider, `partner`), while a manual
+ * assignment from the admin panel sets order.rider_id, a store_users row
+ * (`riderUser`). The partner wins when both exist — that is the record the
+ * person actually carrying the food is logged into.
+ */
+function riderContact({ stage, partner, riderUser }) {
+  if (stage !== STAGE.ON_THE_WAY && stage !== STAGE.DELIVERED) return null;
+
+  const name =
+    String(partner?.dp_name ?? "").trim() ||
+    String(riderUser?.user_name ?? "").trim() ||
+    null;
+
+  const phone =
+    callablePhone(partner?.dp_phone) ||
+    callablePhone(riderUser?.user_phone) ||
+    callablePhone(riderUser?.user_phone_1) ||
+    null;
+
+  if (!name && !phone) return null;
+
+  return { name, phone: stage === STAGE.ON_THE_WAY ? phone : null };
 }
 
 /**
@@ -301,6 +360,7 @@ module.exports = {
   estimateMinutes,
   headline,
   buildTracking,
+  callablePhone,
   travelMinutes,
   loadTrackingJob,
   isAddressLocked,

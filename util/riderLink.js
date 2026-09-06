@@ -128,7 +128,9 @@ async function findPartnerForPanelRider(userId) {
   // dp_phone is not normalised on the way in, so match on the last 10 digits
   // the same way findPanelRider does rather than trusting an exact string.
   const partners = await DeliveryPartner.findAll({
-    attributes: ["dp_id", "dp_phone", "dp_verification_status", "dp_online"],
+    // dp_name so a panel assignment can tell the customer who is coming —
+    // util/riderAssignment.js passes it straight to orderCustomerNotify.
+    attributes: ["dp_id", "dp_name", "dp_phone", "dp_verification_status", "dp_online"],
   });
   return (
     partners.find((p) => normalizePhone(p.dp_phone) === phone) ?? null

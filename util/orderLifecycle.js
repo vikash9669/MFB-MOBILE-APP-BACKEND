@@ -20,6 +20,7 @@ const { PaymentIntent } = require("../models");
 const gateway = require("./gateway");
 const { ordersReady, refundsReady } = require("./lifecycleColumns");
 const { notifyUser } = require("./customerNotify");
+const orderCustomerNotify = require("./orderCustomerNotify");
 const { notifyPartner } = require("./deliveryNotify");
 
 const RECEIVED = 0;
@@ -124,14 +125,9 @@ async function acceptOrder({ orderId, prepMinutes, actor = "vendor" }) {
 
   // Best-effort: the customer should know, but a failed push must not undo an
   // accept the vendor has already been told succeeded.
-  const order = await readOrder(orderId);
-  notifyUser(order?.customer_id, {
-    category: "orders",
-    icon: "restaurant",
-    title: "Order accepted 👨‍🍳",
-    body: `Your order #${orderId} is being prepared. Ready in about ${minutes} minutes.`,
-    refOrderId: orderId,
-  }).catch((e) => console.log("MFB ~ lifecycle ~ accept notify ~", e.message));
+  orderCustomerNotify
+    .orderAccepted(orderId, minutes)
+    .catch((e) => console.log("MFB ~ lifecycle ~ accept notify ~", e.message));
 
   return { ok: true, orderId, prepMinutes: minutes, status: PROCESSED };
 }

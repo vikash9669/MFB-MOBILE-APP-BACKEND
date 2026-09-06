@@ -5,8 +5,8 @@
 // only writes to store_delivery_* tables — never the customer/vendor tables.
 //
 // Used two ways:
-//   • lazily on first login (guarded by DELIVERY_DEMO !== "false"), so any
-//     fresh partner gets a working app in dev;
+//   • lazily on first login, but ONLY when DELIVERY_DEMO is explicitly "true",
+//     so a fresh partner gets a working app in dev;
 //   • via `npm run seed:delivery -- <phone>` to (re)seed a specific partner.
 const {
   DeliveryPartner,
@@ -321,8 +321,18 @@ async function provisionDemoData(partner, { force = false } = {}) {
 }
 
 // Best-effort lazy seed on first login. Never throws into the auth flow.
+//
+// OPT-IN, deliberately. This used to seed unless DELIVERY_DEMO was the exact
+// string "false", which meant a deploy that simply forgot the variable — or
+// mistyped it, or set it to "0" — fabricated orders, earnings and a
+// pre-approved KYC status onto a real partner's first login, and bypassed the
+// onboarding gate while doing it. Fabricated earnings on a live rider's wallet
+// is not a failure mode worth leaving one typo away, so the default is now off
+// and demo data takes a deliberate "true".
+const demoEnabled = () => String(process.env.DELIVERY_DEMO).toLowerCase().trim() === "true";
+
 async function maybeProvisionOnLogin(partner) {
-  if (process.env.DELIVERY_DEMO === "false") {
+  if (!demoEnabled()) {
     return;
   }
   try {
@@ -332,4 +342,4 @@ async function maybeProvisionOnLogin(partner) {
   }
 }
 
-module.exports = { provisionDemoData, maybeProvisionOnLogin, DeliveryPartner };
+module.exports = { provisionDemoData, maybeProvisionOnLogin, demoEnabled, DeliveryPartner };

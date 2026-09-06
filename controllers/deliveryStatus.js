@@ -12,6 +12,7 @@ const {
 } = require("../util/deliverySessions");
 const { dispatchReady } = require("../util/dispatch/columns");
 const { reassign } = require("../util/dispatch/engine");
+const orderCustomerNotify = require("../util/orderCustomerNotify");
 
 /**
  * Returns any not-yet-collected job held by a rider who just went offline.
@@ -191,6 +192,15 @@ exports.updateLocation = async (req, res) => {
     } catch (pointErr) {
       console.log("MFB-error-logs ~ session point ~ err:", pointErr);
     }
+
+    // "Be ready, your rider is about to reach you."
+    //
+    // This is the only one of the six customer notifications with no event to
+    // hang off — nothing happens when a rider gets close, so the location fix
+    // the app already sends once a minute is the signal. Fire-and-forget and
+    // internally guarded: the live tracking map depends on this endpoint, and a
+    // proximity check must never take the rider's position down with it.
+    orderCustomerNotify.checkNearDrop(req.user.dp_id, lat, lng).catch(() => {});
 
     res.json({ message: "Location updated" });
   } catch (err) {

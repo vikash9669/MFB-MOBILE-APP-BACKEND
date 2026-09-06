@@ -14,6 +14,8 @@
 const { findPartnerForPanelRider } = require("./riderLink");
 const { assignJobToPartner } = require("./dispatch/manualAssign");
 const { notifyPartner } = require("./deliveryNotify");
+const orderCustomerNotify = require("./orderCustomerNotify");
+const riderNotify = require("./riderNotify");
 
 /**
  * Puts order `orderId` in front of panel rider `riderId` on their phone.
@@ -54,23 +56,38 @@ async function assignToPanelRider(orderId, riderId, { previousRiderId } = {}) {
       return { ok: false, dp_id: partner.dp_id, do_id: result.do_id, reason: result.reason };
     }
 
+    // The customer's "someone is bringing it" message. Fired here as well as in
+    // deliveryOrders.accept because these are the two independent ways an order
+    // gets a rider — wiring only the app path would leave every panel-assigned
+    // customer silently unnotified, which is the more common case for a job
+    // nobody picked up.
+    orderCustomerNotify
+      .riderAssigned(orderId, partner.dp_name)
+      .catch((err) => console.log("MFB ~ rider assignment ~ customer notify ~", err.message));
+
     // The push is what actually makes the phone light up. Awaited so the panel
     // can report whether it went out, but never allowed to fail the assignment
     // that is already written.
     let pushed = false;
     let pushReason = null;
     try {
+      // Two notifications, deliberately, and they do different jobs.
+      //
+      // The ring is the one that gets a rider's attention on the road — a
+      // manual assignment is usually the rescue of a job nobody picked up, so
+      // it is the last thing that should arrive silently. But a ringing
+      // full-screen alert is a takeover with one action; it cannot also be the
+      // card the rider reads afterwards. The rich card carries the restaurant,
+      // the distance and the earning, and survives in the shade.
       await notifyPartner(partner.dp_id, {
         category: "orders",
         icon: "assignment",
         title: "New delivery assigned",
         body: `Order #${orderId} has been assigned to you. Open the app to start.`,
-        // Call-style, like an engine offer: a manual assignment is usually the
-        // rescue of a job nobody picked up, so it is the last thing that should
-        // arrive as a silent tray notification.
         call: true,
         data: { do_id: String(result.do_id), order_id: String(orderId) },
       });
+      await riderNotify.deliveryAssigned(result.do_id);
       pushed = true;
     } catch (err) {
       pushReason = err.message;

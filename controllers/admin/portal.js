@@ -440,6 +440,13 @@ exports.updateStatus = async (req, res) => {
     } catch (err) {
       console.log("MFB-error-logs ~ portal dispatch on ready ~ err:", err);
     }
+
+    // The other half of "the bag is on the counter": a rider who took this job
+    // while the food was still cooking. dispatchNowForSourceOrder only touches
+    // UNASSIGNED jobs — it exists to find someone — so that rider was told
+    // nothing at all and had to guess when to walk in. Internally guarded.
+    const { notifyAssignedRiderReady } = require("../../util/deliveryDispatch");
+    notifyAssignedRiderReady(orderId).catch(() => {});
   }
 
   res.json({

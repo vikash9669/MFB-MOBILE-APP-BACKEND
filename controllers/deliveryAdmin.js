@@ -5,6 +5,7 @@
 const { DeliveryPartner, DeliveryDocument } = require("../models");
 const { serializePartner } = require("../util/delivery");
 const { notifyPartner } = require("../util/deliveryNotify");
+const riderNotify = require("../util/riderNotify");
 const { alertRiderDecision } = require("../util/riderAlerts");
 const { summaryForPartner, recentForPartner } = require("../util/ratings");
 const {
@@ -115,13 +116,10 @@ exports.verify = async (req, res) => {
         { status: "active" },
         { where: { dp_id: partner.dp_id, status: "pending" } }
       );
-      await notifyPartner(partner.dp_id, {
-        category: "system",
-        icon: "verified",
-        title: "You're approved! 🎉",
-        body: "Your account is verified — you can start delivering now.",
-        data: { type: "verification", status: "approved" },
-      });
+      // Rich, and routed to a refresh rather than a screen: the rider's access
+      // token still says "pending", so the app has to re-read its status
+      // before any screen past the gate will render. See util/riderNotify.js.
+      await riderNotify.applicationApproved(partner.dp_id, partner.dp_name);
 
       // An approved partner is a rider, so make sure the panel side exists too:
       // without it they are missing from the Riders list, the order-assignment

@@ -29,6 +29,11 @@ const label = (s) => STATUS_LABELS[Number(s)] || "Unknown";
 // Status 3 is "Ready to Ship". administration/Ajax::Status settled the cashback
 // ledger at exactly this point, and nothing else in the codebase does it.
 const CASHBACK_SETTLE_STATUS = 3;
+// Same number as CASHBACK_SETTLE_STATUS, deliberately named separately: these
+// are two unrelated rules that happen to fire at the same status, and folding
+// them into one constant would make either one impossible to move later.
+// Resolved by label, matching controllers/admin/portal.js.
+const READY_TO_SHIP = STATUS_LABELS.indexOf("Ready to Ship");
 
 // Recomputes an order's money from its line items, the way both
 // Orders::OrderUpdate and Orders::InvoiceProductAdd did after every change:
@@ -440,6 +445,25 @@ exports.updateStatus = async (req, res) => {
       dispatched = await assignToPanelRider(order.order_id, riderId, {
         previousRiderId: order.rider_id,
       });
+    }
+
+    // "Ready to Ship" means the bag is on the counter, and the rider who
+    // already holds this job needs telling wherever that was set from.
+    //
+    // The vendor portal has done this since the notification existed
+    // (controllers/admin/portal.js), but this route — the admin Orders screen
+    // — did not, so the same action produced a different outcome depending on
+    // which screen an operator happened to be on. A rider who accepted while
+    // the food was still cooking simply never heard, and had to guess when to
+    // walk in.
+    //
+    // After the assignment above, deliberately: setting a rider and marking
+    // the order ready in one call should read as "you have a delivery", then
+    // "and it's ready", not the other way round. Best-effort, like everything
+    // else past the commit.
+    if (status === READY_TO_SHIP) {
+      const { notifyAssignedRiderReady } = require("../../util/deliveryDispatch");
+      notifyAssignedRiderReady(order.order_id).catch(() => {});
     }
 
     res.json({

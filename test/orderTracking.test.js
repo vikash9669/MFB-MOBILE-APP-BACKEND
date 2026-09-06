@@ -8,6 +8,7 @@ const {
   estimateMinutes,
   headline,
   buildTracking,
+  callablePhone,
 } = require("../util/orderTracking");
 
 // The customer-facing stage machine and ETA.
@@ -165,6 +166,80 @@ test("the rider's location is shared only while they are carrying the order", ()
     partner,
   });
   assert.equal(after.rider_point, null);
+});
+
+test("the rider's number is released only while they are carrying the order", () => {
+  const partner = { dp_name: "Suresh", dp_phone: "9812345670" };
+  const job = { drop_lat: 22.76, drop_lng: 75.84, distance_km: 2 };
+
+  const riding = buildTracking({
+    order: order({ order_status: 3 }),
+    job: { ...job, status: "picked_up" },
+    partner,
+  });
+  assert.equal(riding.rider.name, "Suresh");
+  assert.equal(riding.rider.phone, "9812345670");
+
+  // Nobody has agreed to bring it yet — a call here is about a job that does
+  // not exist.
+  const searching = buildTracking({
+    order: order({ order_status: 3 }),
+    job: { ...job, status: "offered" },
+    partner,
+  });
+  assert.equal(searching.rider, null);
+
+  // The name survives for the rating card; the number does not.
+  const delivered = buildTracking({
+    order: order({ order_status: 5 }),
+    job: { ...job, status: "delivered" },
+    partner,
+  });
+  assert.equal(delivered.rider.name, "Suresh");
+  assert.equal(delivered.rider.phone, null);
+});
+
+test("a panel-assigned rider is reachable too, and the app rider wins", () => {
+  const job = { status: "accepted", distance_km: 2 };
+  const riderUser = { user_name: "Panel Rider", user_phone: "9800000001" };
+
+  // Manual assignment from the admin panel: there is no DeliveryPartner row.
+  const panelOnly = buildTracking({
+    order: order({ order_status: 3 }),
+    job,
+    riderUser,
+  });
+  assert.equal(panelOnly.rider.name, "Panel Rider");
+  assert.equal(panelOnly.rider.phone, "9800000001");
+
+  // Both present: the partner is the record the person actually carrying the
+  // food is logged into.
+  const both = buildTracking({
+    order: order({ order_status: 3 }),
+    job,
+    partner: { dp_name: "App Rider", dp_phone: "9800000002" },
+    riderUser,
+  });
+  assert.equal(both.rider.name, "App Rider");
+  assert.equal(both.rider.phone, "9800000002");
+});
+
+test("a placeholder number never becomes a call button", () => {
+  // user_phone_1 is NOT NULL defaulting to 0, so plenty of rows carry junk.
+  for (const junk of ["0", "", null, undefined, "12345", "n/a"]) {
+    assert.equal(callablePhone(junk), null, `expected null for ${junk}`);
+  }
+  // A country code is tolerated and dropped — tel: dials the 10 digits fine.
+  assert.equal(callablePhone("+91 98123 45670"), "9812345670");
+  assert.equal(callablePhone("9812345670"), "9812345670");
+
+  const tracking = buildTracking({
+    order: order({ order_status: 3 }),
+    job: { status: "accepted" },
+    riderUser: { user_name: "No Number", user_phone: "0", user_phone_1: "0" },
+  });
+  assert.equal(tracking.rider.name, "No Number");
+  assert.equal(tracking.rider.phone, null, "a dialler opened on 0 is worse than no button");
 });
 
 test("lateness is reported, not hidden", () => {

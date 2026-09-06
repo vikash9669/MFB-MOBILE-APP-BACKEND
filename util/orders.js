@@ -11,7 +11,7 @@ const {
   PromoRedemption,
 } = require("../models");
 const { getCouponCodeDetails } = require("./coupon");
-const { notifyUser } = require("./customerNotify");
+const orderCustomerNotify = require("./orderCustomerNotify");
 const { queueDeliveryJob } = require("./deliveryDispatch");
 
 // Shared order pipeline for both the COD path (controllers/order.js) and the
@@ -278,14 +278,11 @@ const runPostOrderSideEffectsInBackground = async ({
     console.error("Failed to send email notification:", emailError.message);
   }
 
+  // Names the food and the restaurant rather than the order number, and
+  // carries a picture — see util/orderCustomerNotify.js. Already guarded
+  // internally; the catch stays because this chain must not break on it.
   try {
-    await notifyUser(user_id, {
-      category: "orders",
-      icon: "receipt_long",
-      title: "Order placed 🎉",
-      body: `We've received order #${order_id}. We'll keep you updated here.`,
-      refOrderId: order_id,
-    });
+    await orderCustomerNotify.orderPlaced(order_id);
   } catch (notifyError) {
     console.error("Failed to raise order notification:", notifyError.message);
   }
