@@ -435,16 +435,66 @@ async function notifyAdminsPaymentMismatch({ merchantTxnId, quoted, collected, s
   }
 }
 
+// How long a stuck-payment alert suppresses the next identical one.
+const STUCK_REALERT_HOURS = Number(process.env.PAYMENT_STUCK_REALERT_HOURS || 12);
+
+// The part of the title that does not vary with the count, so a pile that grows
+// from 3 to 4 is still recognised as the same standing alert.
+const STUCK_TITLE_SUFFIX = "payment(s) charged with no order";
+
+/**
+ * Has this alert already been raised inside the re-alert window?
+ *
+ * The caller (util/paymentSweeper.js) only alerts when the count CHANGES, but
+ * it tracks that in a process-local variable — so every restart resets it and
+ * re-alerts for the same payments. On a host that sleeps when idle that is not
+ * an edge case: it produced 70 identical notifications for the same 3 payments,
+ * which is how a real alert gets trained into background noise.
+ *
+ * Deduping on the durable rows instead means the window survives restarts,
+ * redeploys and multiple instances. Failure here returns false — a duplicate
+ * notification is a far better outcome than a silently swallowed one.
+ */
+async function stuckAlertedRecently() {
+  try {
+    const found = await UserNotification.findOne({
+      attributes: ["notif_id"],
+      where: {
+        title: { [Op.like]: `%${STUCK_TITLE_SUFFIX}` },
+        created_at: { [Op.gt]: new Date(Date.now() - STUCK_REALERT_HOURS * 3600000) },
+      },
+    });
+    return found != null;
+  } catch (err) {
+    console.log("MFB-error-logs ~ stuckAlertedRecently ~", err.message);
+    return false;
+  }
+}
+
 /**
  * Payments the reconciliation sweep has given up on.
  *
  * This is the worst state the system can produce: the customer has been charged
  * and no order exists. It used to be a console.log, which on a hosted box means
  * nobody will ever see it.
+ *
+ * Rate-limited to one alert per PAYMENT_STUCK_REALERT_HOURS — see
+ * stuckAlertedRecently. The payments do not go away when the alert is
+ * suppressed; they still need a human at store_payment_intents.
  */
 async function notifyAdminsPaymentsStuck({ count, hours }) {
   try {
-    const title = `${count} payment(s) charged with no order`;
+    if (await stuckAlertedRecently()) {
+      console.log(
+        `MFB ~ ${count} payment(s) still stuck — alert suppressed, one was already ` +
+          `raised in the last ${STUCK_REALERT_HOURS}h.`
+      );
+      return {
+        panel: 0, realtime: 0, email: null, sms: null,
+        channels: [], suppressed: "already_alerted",
+      };
+    }
+    const title = `${count} ${STUCK_TITLE_SUFFIX}`;
     const body =
       `Stuck PENDING for over ${hours}h and no longer polled. ` +
       "Each one may be a customer charged for nothing.";

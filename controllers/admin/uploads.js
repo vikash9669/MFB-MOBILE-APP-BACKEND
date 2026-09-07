@@ -15,15 +15,11 @@
 // and store_products_images.image_name. Those directories are already served by
 // the PHP host on :8091 and by www.myfirstbite.in in production, so writing here
 // keeps every existing image URL working.
-const fs = require("node:fs/promises");
-const path = require("node:path");
 const { Product, User } = require("../../models");
-
-// Where the PHP app keeps its uploads. Configurable because the backend and the
-// PHP host may not share a filesystem once deployed.
-const UPLOAD_ROOT =
-  process.env.UPLOADS_ROOT ||
-  path.resolve(__dirname, "../../../MFB_PHP_ADMIN_PANEL/admin/assets/uploads");
+// Where the bytes go. The backend and the PHP host do not share a filesystem
+// once deployed, which is exactly the case this used to get silently wrong —
+// see util/uploadStore.js.
+const uploadStore = require("../../util/uploadStore");
 
 // The kinds the PHP app uses; anything else is rejected so a request can't
 // write outside these directories.
@@ -74,18 +70,24 @@ exports.upload = async (req, res) => {
     // Stored without an extension in the DB, exactly as the PHP app does — the
     // consumer appends /webp/<name>.webp or /jpg/<name>.jpg.
     const base = `${safeName(filename)}_${Date.now().toString().slice(-6)}`;
-    const dir = path.join(UPLOAD_ROOT, kind, ext);
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, `${base}.${ext}`), buffer);
+    const { path: relative } = await uploadStore.putImage({ kind, ext, base, buffer });
 
     res.status(201).json({
       message: "Image uploaded",
       image_name: base,
       kind,
       // Relative to whatever serves the PHP assets directory.
-      path: `${kind}/${ext}/${base}.${ext}`,
+      path: relative,
     });
   } catch (err) {
+    // A 201 for a file that went nowhere is what made the original bug
+    // invisible: the panel showed success and the image was already lost. Say
+    // plainly that storage is unavailable so the caller can keep the artwork
+    // and try again once it is configured.
+    if (err.unavailable) {
+      console.log("MFB-error-logs ~ upload ~ refused:", err.message);
+      return res.status(503).json({ message: err.message });
+    }
     console.log("MFB-error-logs ~ upload ~ err:", err);
     res.status(500).json({ message: "Upload failed" });
   }
@@ -103,18 +105,13 @@ exports.remove = async (req, res) => {
     const base = safeName(image_name);
     if (!base) return res.status(400).json({ message: "No image named" });
 
-    let removed = 0;
-    for (const ext of ["webp", "jpg"]) {
-      const file = path.join(UPLOAD_ROOT, kind, ext, `${base}.${ext}`);
-      try {
-        await fs.unlink(file);
-        removed += 1;
-      } catch {
-        // Already gone — nothing to do.
-      }
-    }
+    const removed = await uploadStore.removeImage({ kind, base });
     res.json({ message: removed ? "Image removed" : "Nothing to remove", removed });
   } catch (err) {
+    if (err.unavailable) {
+      console.log("MFB-error-logs ~ remove image ~ refused:", err.message);
+      return res.status(503).json({ message: err.message });
+    }
     console.log("MFB-error-logs ~ remove image ~ err:", err);
     res.status(500).json({ message: "Failed to remove image" });
   }
@@ -145,5 +142,7 @@ exports.attach = async (req, res) => {
   }
 };
 
-exports.UPLOAD_ROOT = UPLOAD_ROOT;
+// UPLOAD_ROOT is deliberately no longer exported: the destination may be an FTP
+// host, so a single local path is not the answer any more. util/uploadStore.js
+// owns it, and describe() is what to ask.
 exports.KINDS = KINDS;

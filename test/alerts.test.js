@@ -339,3 +339,89 @@ test("the values shipped in render.yaml produce the intended routing", async () 
     }
   );
 });
+
+// ── Stuck-payment alert: one notification, not seventy ──────────────
+//
+// The sweeper only alerts when the stuck count CHANGES, but it tracked that in
+// a process-local variable. On a host that sleeps when idle, every wake reset
+// it and re-alerted for the same payments — 70 identical notifications for the
+// same 3 stuck intents, which is how a real alert becomes background noise.
+// The window now lives on the durable rows, so it survives a restart.
+
+const { UserNotification } = require("../models");
+
+/** Runs fn with UserNotification.findOne answering `found`, then restores. */
+const withExistingAlert = async (found, fn) => {
+  const real = UserNotification.findOne;
+  const seen = [];
+  UserNotification.findOne = async (opts) => {
+    seen.push(opts);
+    return found ? { notif_id: 1 } : null;
+  };
+  try {
+    return await fn(seen);
+  } finally {
+    UserNotification.findOne = real;
+  }
+};
+
+test("a stuck-payment alert already raised in the window is not repeated", async () => {
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "none" }, async () => {
+    const result = await withExistingAlert(true, () =>
+      adminNotify.notifyAdminsPaymentsStuck({ count: 3, hours: 24 }),
+    );
+    assert.strictEqual(result.suppressed, "already_alerted");
+    assert.strictEqual(result.panel, 0);
+    // Suppression must be silent to the caller, never an error it might retry.
+    assert.ok(!result.error, `unexpected error: ${result.error}`);
+  });
+});
+
+test("the first stuck-payment alert in a quiet window still goes out", async () => {
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "none" }, async () => {
+    const result = await withExistingAlert(false, () =>
+      adminNotify.notifyAdminsPaymentsStuck({ count: 3, hours: 24 }),
+    );
+    assert.strictEqual(result.suppressed, undefined);
+    assert.ok(!result.error, `unexpected error: ${result.error}`);
+  });
+});
+
+test("the dedupe window ignores the count, so a growing pile stays quiet", async () => {
+  // Matching on the whole title would let 3 -> 4 -> 5 raise a fresh alert each
+  // time, which is the same spam wearing a different number.
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "none" }, async () => {
+    const seen = await withExistingAlert(true, async (calls) => {
+      await adminNotify.notifyAdminsPaymentsStuck({ count: 9, hours: 24 });
+      return calls;
+    });
+    const where = seen[0].where;
+    assert.ok(where.title, "the lookup must filter on title");
+    // Op.like is a Symbol key, so Object.values would miss it entirely.
+    const symbols = Object.getOwnPropertySymbols(where.title);
+    assert.strictEqual(symbols.length, 1, "expected exactly one Op on title");
+    const pattern = String(where.title[symbols[0]]);
+    assert.ok(
+      pattern.startsWith("%") && !/\d/.test(pattern),
+      `pattern must be count-agnostic, got ${pattern}`,
+    );
+  });
+});
+
+test("a database failure during the dedupe check alerts rather than swallows", async () => {
+  // A lookup that throws must not be read as "already alerted" — that would
+  // suppress the worst alert the system can raise, silently.
+  await withEnv({ ORDER_ESCALATION_CHANNELS: "none" }, async () => {
+    const real = UserNotification.findOne;
+    UserNotification.findOne = async () => {
+      throw new Error("database on fire");
+    };
+    try {
+      const result = await adminNotify.notifyAdminsPaymentsStuck({ count: 3, hours: 24 });
+      assert.strictEqual(result.suppressed, undefined);
+      assert.ok(!result.error, `unexpected error: ${result.error}`);
+    } finally {
+      UserNotification.findOne = real;
+    }
+  });
+});

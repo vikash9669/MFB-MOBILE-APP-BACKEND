@@ -13,6 +13,7 @@ const os = require("os");
 const { transportName } = require("./email");
 const origins = require("./origins");
 const gateway = require("./gateway");
+const uploadStore = require("./uploadStore");
 
 const P = "MFB ~ ";
 const line = (s = "") => console.log(P + s);
@@ -111,6 +112,16 @@ function warnings() {
         "Payments will stay PENDING even when the money has left the customer's account."
     );
   }
+  // Uploads that went nowhere were invisible for weeks: the panel reported
+  // success and the image was already gone. They are refused now rather than
+  // lost, but a deployment that cannot store an image at all should say so at
+  // boot, not at the moment someone tries to change a banner.
+  if (uploadStore.localIsEphemeral() && !uploadStore.remoteConfigured()) {
+    w.push(
+      "Image storage is NOT configured — every upload will be refused with 503. " +
+        "Set UPLOADS_FTP_HOST / UPLOADS_FTP_USER / UPLOADS_FTP_PASSWORD."
+    );
+  }
   if (/change_me|dev_access_secret/i.test(process.env.JWT_SECRET_KEY || "")) {
     w.push("JWT_SECRET_KEY still looks like the shipped default — anyone who knows it can mint tokens.");
   }
@@ -151,6 +162,10 @@ function reportBoot({ dbName, dbHost, dbPort, timezone, schema }) {
         `${gateway.qrConfigured() ? ", doorstep QR on" : ", doorstep QR off"}`
     );
   }
+  // Where uploaded images land. Worth its own line for the same reason the
+  // gateway gets one: it is a single env var, it is invisible when wrong, and
+  // the failure shows up as a broken picture long after the upload.
+  line(`uploads    ${uploadStore.describe()}`);
   rule();
   line("integrations");
   for (const [name, ok, detail] of integrations()) {
