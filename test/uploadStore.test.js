@@ -168,3 +168,37 @@ test("a leading slash or trailing slashes on the root are tolerated", () => {
 test("an unset root keeps the documented Hostinger default", () => {
   assert.strictEqual(uploadStore._normaliseRoot(undefined), "public_html/assets/uploads");
 });
+
+// ── Diagnosing a failed transfer ────────────────────────────────────
+//
+// The first real deploy failed with a bare 500 "Upload failed", which says
+// nothing an admin can act on. Every failure this deployment can plausibly hit
+// now names the setting to change.
+
+test("a failed transfer is reported, never swallowed into a success", () => {
+  const failure = new uploadStore.UploadFailed(new Error("530 Login incorrect."));
+  assert.strictEqual(failure.storageFailure, true, "the route needs this to answer 502");
+  assert.match(failure.message, /UPLOADS_FTP_USER/, "must name the setting to change");
+  assert.ok(failure.cause, "the original error must survive for the log");
+});
+
+test("each plausible FTP failure names the setting to fix", () => {
+  const expectations = [
+    ["Cannot find module 'basic-ftp'", /package\.json was not deployed/],
+    ["530 Login incorrect.", /UPLOADS_FTP_USER/],
+    ["getaddrinfo ENOTFOUND ftp.bad.host", /UPLOADS_FTP_HOST/],
+    ["connect ETIMEDOUT 1.2.3.4:21", /allows connections from this server's IP/],
+    ["425 Unable to build data connection", /UPLOADS_FTP_SECURE=false/],
+    ["550 Permission denied.", /UPLOADS_FTP_ROOT/],
+    ["write EPROTO wrong version number", /UPLOADS_FTP_SECURE=false/],
+  ];
+  for (const [raw, expected] of expectations) {
+    assert.match(uploadStore._explain(new Error(raw)), expected, `unhelpful for: ${raw}`);
+  }
+});
+
+test("an unrecognised error is passed through rather than guessed at", () => {
+  // Inventing an explanation for an error we do not recognise would send
+  // someone to change the wrong setting.
+  assert.strictEqual(uploadStore._explain(new Error("something novel")), "something novel");
+});

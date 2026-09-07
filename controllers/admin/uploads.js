@@ -88,6 +88,13 @@ exports.upload = async (req, res) => {
       console.log("MFB-error-logs ~ upload ~ refused:", err.message);
       return res.status(503).json({ message: err.message });
     }
+    // A storage failure names what to change. This route is admin-only, so the
+    // detail goes to the panel rather than making someone read server logs to
+    // learn that a password is wrong. The underlying error is logged in full.
+    if (err.storageFailure) {
+      console.log("MFB-error-logs ~ upload ~ storage:", err.message, "~ cause:", err.cause?.message);
+      return res.status(502).json({ message: err.message });
+    }
     console.log("MFB-error-logs ~ upload ~ err:", err);
     res.status(500).json({ message: "Upload failed" });
   }
@@ -111,6 +118,10 @@ exports.remove = async (req, res) => {
     if (err.unavailable) {
       console.log("MFB-error-logs ~ remove image ~ refused:", err.message);
       return res.status(503).json({ message: err.message });
+    }
+    if (err.storageFailure) {
+      console.log("MFB-error-logs ~ remove image ~ storage:", err.message);
+      return res.status(502).json({ message: err.message });
     }
     console.log("MFB-error-logs ~ remove image ~ err:", err);
     res.status(500).json({ message: "Failed to remove image" });

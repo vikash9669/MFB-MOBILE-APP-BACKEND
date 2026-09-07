@@ -111,6 +111,61 @@ const NOT_CONFIGURED =
   "rather than silently lost. Set UPLOADS_FTP_HOST / UPLOADS_FTP_USER / " +
   "UPLOADS_FTP_PASSWORD (see .env.production.example).";
 
+/**
+ * Turns an FTP failure into something an admin can act on.
+ *
+ * basic-ftp surfaces the server's reply verbatim ("530 Login incorrect"), which
+ * is precise but assumes you know FTP. These are the failures this deployment
+ * can actually hit, each with the thing to change.
+ */
+function explain(err) {
+  const raw = String(err && err.message ? err.message : err);
+  const code = Number(err && err.code);
+
+  if (/Cannot find module 'basic-ftp'/i.test(raw)) {
+    return "the basic-ftp dependency is missing on this server — package.json was not deployed with the code";
+  }
+  if (code === 530 || /530|login|password|authenticat/i.test(raw)) {
+    return "the FTP server rejected the login — check UPLOADS_FTP_USER and UPLOADS_FTP_PASSWORD";
+  }
+  if (/ENOTFOUND|EAI_AGAIN/i.test(raw)) {
+    return "the FTP hostname could not be resolved — check UPLOADS_FTP_HOST";
+  }
+  if (/ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|timeout/i.test(raw)) {
+    return (
+      "could not reach the FTP server — check UPLOADS_FTP_HOST and UPLOADS_FTP_PORT, " +
+      "and that the host allows connections from this server's IP"
+    );
+  }
+  if (/425|data connection|PASV|passive/i.test(raw)) {
+    return (
+      "the FTP data connection was refused. This is usually a server that requires TLS " +
+      "session reuse for passive transfers. Try UPLOADS_FTP_SECURE=false if the host " +
+      "permits plain FTP, or use an SFTP-capable account"
+    );
+  }
+  if (/550|permission|denied|access/i.test(raw)) {
+    return (
+      "the FTP account cannot write there — check UPLOADS_FTP_ROOT matches the account's " +
+      "login directory (use '.' if the account is scoped to the uploads folder)"
+    );
+  }
+  if (/self.signed|certificate|SSL|TLS|wrong version/i.test(raw)) {
+    return "the TLS handshake failed — the host may not support FTPS; try UPLOADS_FTP_SECURE=false";
+  }
+  return raw;
+}
+
+/** Raised when the remote store is configured but the transfer failed. */
+class UploadFailed extends Error {
+  constructor(err) {
+    super(`Image storage rejected the upload: ${explain(err)}.`);
+    this.name = "UploadFailed";
+    this.storageFailure = true;
+    this.cause = err;
+  }
+}
+
 /** Runs `fn` against a connected FTP client, always closing it. */
 async function withClient(fn) {
   // Required lazily so a deployment that never uploads does not pay for the
@@ -148,14 +203,20 @@ async function putImage({ kind, ext, base, buffer }) {
 
   if (remoteConfigured()) {
     const { Readable } = require("node:stream");
-    await withClient(async (client, cfg) => {
+    try {
+      await withClient(async (client, cfg) => {
       // ensureDir creates the whole chain and leaves the CWD there, so the
       // upload path is relative to it afterwards. Kept RELATIVE to the login
       // directory: a leading "/" would address the server's FTP root, which is
       // not the account's home on a scoped account.
-      await client.ensureDir(remotePath(cfg.root, `${kind}/${ext}`));
-      await client.uploadFrom(Readable.from(buffer), `${base}.${ext}`);
-    });
+        await client.ensureDir(remotePath(cfg.root, `${kind}/${ext}`));
+        await client.uploadFrom(Readable.from(buffer), `${base}.${ext}`);
+      });
+    } catch (err) {
+      // Never let this look like a success. The whole module exists because a
+      // failed write once returned 201.
+      throw new UploadFailed(err);
+    }
     return { stored: "remote", path: relative };
   }
 
@@ -208,6 +269,8 @@ async function removeImage({ kind, base }) {
 module.exports = {
   putImage,
   _normaliseRoot: normaliseRoot,
+  _explain: explain,
+  UploadFailed,
   _remotePath: remotePath,
   removeImage,
   describe,
