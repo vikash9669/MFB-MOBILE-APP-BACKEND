@@ -18,7 +18,7 @@ const {
   Location,
   DeliveryOrder,
 } = require("../models");
-const { QueryTypes } = require("sequelize");
+const { QueryTypes, fn } = require("sequelize");
 const sequelize = require("./database");
 const { num, genOtp } = require("./delivery");
 const { geocode, roadDistanceKm, isGeocodingConfigured } = require("./geo");
@@ -243,7 +243,19 @@ async function createJobForOrder(orderId) {
 
     ...computeEarnings(distanceKm),
 
-    offered_at: new Date(),
+    // Computed by MySQL, NOT passed as a JS Date — the same rule the rest of
+    // dispatch follows (util/dispatch/offers.js, engine.js).
+    //
+    // The connection timezone is +05:30, so Sequelize serialises a JS Date
+    // into IST wall clock, while every other timestamp on this table is
+    // written with UTC_TIMESTAMP(). Reads do not convert back, so the two
+    // conventions came out of the same row 5h30m apart: an order offered at
+    // 06:49 UTC reported `offered_at: 12:19Z` next to `dispatch_at: 06:49Z`.
+    // Nothing compares this column against UTC_TIMESTAMP(), so the damage was
+    // confined to what operators read — but a queue screen showing a job
+    // offered five and a half hours in the future is not a small thing when
+    // you are trying to work out why a rider never came.
+    offered_at: fn("UTC_TIMESTAMP"),
   });
 }
 

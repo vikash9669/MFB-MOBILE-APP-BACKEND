@@ -317,10 +317,40 @@ exports.setActive = async (req, res) => {
     if (user == null) {
       return res.status(404).json({ message: "Not found" });
     }
-    await user.update({ user_active: Number(req.body.active) ? 1 : 0 });
+    const active = Number(req.body.active) ? 1 : 0;
+    await user.update({ user_active: active });
+
+    // For a RIDER, "Listed" has to mean listed to the dispatch engine too.
+    //
+    // user_active and dp_active are separate columns on purpose (see
+    // models/delivery_partner.js), but separate is not the same as
+    // unreachable: dispatch reads only dp_active, and until now NOTHING an
+    // operator could click wrote it. A rider could be approved, Listed, Active
+    // and online, and the engine still could not see them — with no toggle
+    // anywhere to fix it. On the clone that was 78 of 94 approved riders.
+    //
+    // Scoped to user_role 3 so a customer or vendor row is never given
+    // delivery flags. Best-effort: the listing change is already committed and
+    // must not be reported as failed because the mirror was.
+    let dispatchable = null;
+    if (Number(user.user_role) === RIDER_ROLE) {
+      try {
+        await DeliveryPartner.update(
+          { dp_active: active },
+          { where: { dp_id: user.user_id } }
+        );
+        dispatchable = active === 1;
+      } catch (err) {
+        console.log("MFB-error-logs ~ set active dp mirror ~ err:", err);
+      }
+    }
+
     res.json({
-      message: Number(req.body.active) ? "Listed" : "Delisted",
-      active: Number(req.body.active) ? 1 : 0,
+      message: active ? "Listed" : "Delisted",
+      active,
+      // Lets the panel say "visible to dispatch" rather than leaving an
+      // operator to guess whether listing a rider actually did anything.
+      dispatchable,
     });
   } catch (err) {
     console.log("MFB-error-logs ~ admin set active ~ err:", err);

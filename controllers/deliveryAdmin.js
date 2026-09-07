@@ -110,6 +110,15 @@ exports.verify = async (req, res) => {
         dp_verification_status: "approved",
         dp_reviewed_at: new Date(),
         dp_rejection_reason: null,
+        // Approval is what makes a rider dispatchable, so it has to set the
+        // flag dispatch actually reads. Every query in util/dispatch requires
+        // `dp_active = 1`, and until now NOTHING on this path wrote it: the
+        // panel link below sets user_active/user_status, which dispatch never
+        // looks at. An approved rider could therefore be Listed and Active on
+        // every panel screen, show "You're online" in their own app, and still
+        // be invisible to the engine — with nothing anywhere saying why.
+        // Observed on the clone: 94 approved partners, 16 dispatchable.
+        dp_active: 1,
       });
       // Clear pending KYC docs to active.
       await DeliveryDocument.update(
@@ -158,6 +167,11 @@ exports.verify = async (req, res) => {
         dp_verification_status: "rejected",
         dp_reviewed_at: new Date(),
         dp_rejection_reason: reason || "Some details need to be corrected.",
+        // The mirror of the approve branch: a rejected rider must not stay
+        // dispatchable. dp_verification_status alone would already exclude
+        // them, so this is belt-and-braces — but leaving the two flags to
+        // drift is exactly how the approve side ended up broken.
+        dp_active: 0,
       });
       if (Array.isArray(reject_docs) && reject_docs.length > 0) {
         await DeliveryDocument.update(

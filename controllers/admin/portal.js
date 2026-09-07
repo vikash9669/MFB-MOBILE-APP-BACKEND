@@ -36,6 +36,9 @@ const label = (s) => STATUS_LABELS[Number(s)] || "Unknown";
 // a bare `3` in that condition is the kind of thing that silently rots when the
 // label list changes.
 const READY_TO_SHIP = STATUS_LABELS.indexOf("Ready to Ship");
+// The other status with a consequence outside store_orders: a cancelled order
+// must not leave a live delivery job behind. See updateStatus.
+const CANCELLED = STATUS_LABELS.indexOf("Cancelled");
 
 /**
  * How many line items each order has, in one query rather than N.
@@ -447,6 +450,31 @@ exports.updateStatus = async (req, res) => {
     // nothing at all and had to guess when to walk in. Internally guarded.
     const { notifyAssignedRiderReady } = require("../../util/deliveryDispatch");
     notifyAssignedRiderReady(orderId).catch(() => {});
+  }
+
+  // Cancelling here used to write the row and nothing else, so the delivery job
+  // stayed `offered` and in the dispatch queue: the engine kept hunting for a
+  // rider, and a rider could still be offered — and accept — an order that had
+  // already been cancelled and possibly refunded. Reproduced on the clone,
+  // where cancelling two orders left both their jobs live until they were
+  // cancelled again by hand through /admin/dispatch.
+  //
+  // retractDeliveryJob already existed for exactly this; it was simply wired
+  // only into orderLifecycle.cancelOrder (vendor decline, accept-window
+  // sweeper) and not into the panel's status dropdown, which is the path an
+  // operator actually uses. It scopes itself to jobs at 'offered' or
+  // 'accepted', so a delivery already picked up is left alone — that one is a
+  // phone call, not a state change.
+  //
+  // Best-effort and last: the cancellation is committed, and must not be
+  // reported as failed because the dispatch side was.
+  if (status === CANCELLED) {
+    try {
+      const { retractDeliveryJob } = require("../../util/orderLifecycle");
+      await retractDeliveryJob(orderId, "order cancelled from the panel");
+    } catch (err) {
+      console.log("MFB-error-logs ~ portal retract on cancel ~ err:", err);
+    }
   }
 
   res.json({

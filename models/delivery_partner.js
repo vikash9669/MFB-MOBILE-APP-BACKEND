@@ -261,8 +261,15 @@ const DeliveryPartner = sequelize.define(
     // Deliberately NOT mapped onto user_active. That column is a tri-state
     // panel listing flag — of the 92 existing riders, 66 are 0, 14 are 1 and
     // 12 are 2 — while every dispatch query tests `dp_active: 1`. Merging them
-    // would have silently made 78 riders undispatchable. setPanelRiderAccess
-    // keeps the two in step when an admin lists or delists somebody.
+    // would have silently made 78 riders undispatchable.
+    //
+    // Separating them is only half the job, though, and for a long time it was
+    // the only half: setPanelRiderAccess writes user_active/user_status and
+    // does NOT touch this column, so nothing on the approval path set it. The
+    // outcome was the one the separation was meant to prevent — on the clone,
+    // 94 approved partners and 16 the engine could see. controllers/
+    // deliveryAdmin.js `verify` now sets it on both branches. If you add
+    // another way to approve a rider, it has to set this too.
     dp_active: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
