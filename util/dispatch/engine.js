@@ -95,17 +95,18 @@ const lastSearchLog = new Map();
 /**
  * Whether this fruitless search is worth a row.
  *
- * Always logs the first one and any change of radius — those are the lines
- * someone reading the log actually needs. The identical repeats in between are
- * throttled to one per searchLogEverySec.
+ * Always logs the first one; the identical repeats after it are throttled to
+ * one per searchLogEverySec. It used to also log on any change of radius, but
+ * there is no radius any more — the search is the whole fleet or nothing, so
+ * consecutive failures are always the same failure.
  */
-async function shouldLogSearch(doId, radiusKm, everySec) {
+async function shouldLogSearch(doId, everySec) {
   const prev = lastSearchLog.get(doId);
   const now = Date.now();
-  if (prev && prev.radiusKm === radiusKm && now - prev.at < everySec * 1000) {
+  if (prev && now - prev.at < everySec * 1000) {
     return false;
   }
-  lastSearchLog.set(doId, { radiusKm, at: now });
+  lastSearchLog.set(doId, { at: now });
   return true;
 }
 
@@ -132,7 +133,7 @@ async function offerNext(job) {
   }
 
   const excludeDpIds = await offers.excludedRiders(job.do_id);
-  const { candidates, radiusKm, reason } = await findCandidates(job, {
+  const { candidates, reason } = await findCandidates(job, {
     excludeDpIds,
     hasColumns: true,
   });
@@ -147,35 +148,30 @@ async function offerNext(job) {
     if (searchingMin != null && searchingMin >= cfg.noRiderTimeoutMin) {
       await markExhausted(
         job,
-        `no rider within ${radiusKm}km after ${Math.round(searchingMin)} minutes`
+        `no free rider anywhere after ${Math.round(searchingMin)} minutes`
       );
       return `#${job.do_id} exhausted (no riders)`;
     }
 
     // Log sparsely. The search repeats every tick by design; recording each
     // failure would write a row every few seconds per stuck job.
-    if (await shouldLogSearch(job.do_id, radiusKm, cfg.searchLogEverySec)) {
-      await offers.logDispatch(job.do_id, "search", {
-        radiusKm,
-        candidates: 0,
-        detail: reason,
-      });
+    if (await shouldLogSearch(job.do_id, cfg.searchLogEverySec)) {
+      await offers.logDispatch(job.do_id, "search", { candidates: 0, detail: reason });
     }
 
     await sequelize.query(
       `UPDATE \`store_delivery_orders\`
-          SET \`dispatch_state\` = 'searching', \`search_radius_km\` = :radius
+          SET \`dispatch_state\` = 'searching', \`search_radius_km\` = NULL
         WHERE \`do_id\` = :doId`,
-      { replacements: { doId: job.do_id, radius: radiusKm }, type: QueryTypes.UPDATE }
+      { replacements: { doId: job.do_id }, type: QueryTypes.UPDATE }
     );
     return null;
   }
 
   // Worth recording every time: this one found somebody.
   await offers.logDispatch(job.do_id, "search", {
-    radiusKm,
     candidates: candidates.length,
-    detail: reason,
+    detail: `${candidates.length} free rider(s) online`,
   });
 
   const best = candidates[0];
@@ -190,12 +186,9 @@ async function offerNext(job) {
   await sequelize.query(
     `UPDATE \`store_delivery_orders\`
         SET \`dispatch_state\` = 'searching', \`offer_round\` = :round,
-            \`search_radius_km\` = :radius
+            \`search_radius_km\` = NULL
       WHERE \`do_id\` = :doId`,
-    {
-      replacements: { doId: job.do_id, round, radius: radiusKm },
-      type: QueryTypes.UPDATE,
-    }
+    { replacements: { doId: job.do_id, round }, type: QueryTypes.UPDATE }
   );
 
   // Rings the rider like a call rather than dropping a tray notification: the
@@ -220,11 +213,11 @@ async function offerNext(job) {
     },
   }).catch(() => {});
 
-  return `#${job.do_id} → rider ${best.rider.dpId} (score ${best.score}, ${best.distanceKm}km, r${round})`;
+  return `#${job.do_id} → rider ${best.rider.dpId} (score ${best.score}, ${best.distanceKm ?? "?"}km, r${round})`;
 }
 
 /**
- * Broadcast one job to every eligible rider within broadcastRadiusKm at once.
+ * Broadcast one job to every online, approved, free rider at once.
  *
  * The re-broadcast cadence is not a timer here: while any offer from the last
  * round is still live, hasLiveOffer() short-circuits this and the job is left
@@ -244,30 +237,30 @@ async function offerBroadcast(job, cfg) {
     return `#${job.do_id} → admin (no rider)`;
   }
 
-  const centre = { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng) };
-  if (!Number.isFinite(centre.lat) || !Number.isFinite(centre.lng)) {
-    await escalateToAdmin(job, "job has no pickup coordinates");
-    return `#${job.do_id} → admin (no coordinates)`;
-  }
+  // Missing pickup coordinates no longer strand the job. They cost us the
+  // distance shown on the card, nothing more — the fleet is found by who is
+  // online and free, not by where the restaurant is.
+  const lat = Number(job.pickup_lat);
+  const lng = Number(job.pickup_lng);
+  const centre = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 
-  // Everyone in range, no expanding rings and no scoring — a broadcast reaches
-  // the whole nearby fleet and lets the fastest finger win.
-  const candidates = await eligibleRiders(centre, cfg.broadcastRadiusKm, { hasColumns: true });
+  // EVERY online, approved, free rider — no rings, no radius, no scoring. The
+  // broadcast reaches the whole fleet and lets the fastest finger win.
+  const candidates = await eligibleRiders(centre, { hasColumns: true });
   const round = Number(job.offer_round || 0) + 1;
 
   if (candidates.length === 0) {
-    if (await shouldLogSearch(job.do_id, cfg.broadcastRadiusKm, cfg.searchLogEverySec)) {
+    if (await shouldLogSearch(job.do_id, cfg.searchLogEverySec)) {
       await offers.logDispatch(job.do_id, "search", {
-        radiusKm: cfg.broadcastRadiusKm,
         candidates: 0,
-        detail: "no eligible riders in range",
+        detail: "no online rider is free to take this job",
       });
     }
     await sequelize.query(
       `UPDATE \`store_delivery_orders\`
-          SET \`dispatch_state\` = 'searching', \`search_radius_km\` = :radius
+          SET \`dispatch_state\` = 'searching', \`search_radius_km\` = NULL
         WHERE \`do_id\` = :doId`,
-      { replacements: { doId: job.do_id, radius: cfg.broadcastRadiusKm }, type: QueryTypes.UPDATE }
+      { replacements: { doId: job.do_id }, type: QueryTypes.UPDATE }
     );
     return null;
   }
@@ -278,12 +271,9 @@ async function offerBroadcast(job, cfg) {
   await sequelize.query(
     `UPDATE \`store_delivery_orders\`
         SET \`dispatch_state\` = 'searching', \`offer_round\` = :round,
-            \`search_radius_km\` = :radius
+            \`search_radius_km\` = NULL
       WHERE \`do_id\` = :doId`,
-    {
-      replacements: { doId: job.do_id, round, radius: cfg.broadcastRadiusKm },
-      type: QueryTypes.UPDATE,
-    }
+    { replacements: { doId: job.do_id, round }, type: QueryTypes.UPDATE }
   );
 
   // Ring every candidate at once, call-style — the offer stands for
@@ -294,7 +284,7 @@ async function offerBroadcast(job, cfg) {
       category: "orders",
       icon: "delivery_dining",
       title: `New delivery · ₹${job.earn_total}`,
-      body: `${job.pickup_name || "Pickup"} → ${job.drop_area || "drop"} · ${c.distanceKm}km · first to accept gets it`,
+      body: `${job.pickup_name || "Pickup"} → ${job.drop_area || "drop"}${c.distanceKm != null ? ` · ${c.distanceKm}km` : ""} · first to accept gets it`,
       call: true,
       ttlSec: cfg.broadcastTtlSec,
       data: {
@@ -303,13 +293,13 @@ async function offerBroadcast(job, cfg) {
         expires_in: cfg.broadcastTtlSec,
         pickup_name: job.pickup_name || "",
         drop_area: job.drop_area || "",
-        distance_km: c.distanceKm,
+        ...(c.distanceKm != null ? { distance_km: c.distanceKm } : {}),
         earn_total: job.earn_total,
       },
     }).catch(() => {});
   }
 
-  return `#${job.do_id} ⇒ broadcast r${round} to ${n} rider(s) ≤${cfg.broadcastRadiusKm}km`;
+  return `#${job.do_id} ⇒ broadcast r${round} to ${n} free rider(s) fleet-wide`;
 }
 
 /**

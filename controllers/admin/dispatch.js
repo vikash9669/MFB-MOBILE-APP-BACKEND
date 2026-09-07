@@ -81,7 +81,15 @@ exports.status = async (req, res) => {
         // acceptance rate means the engine keeps picking riders who say no.
         acceptance_pct: offered > 0 ? Math.round((Number(offers.accepted || 0) / offered) * 100) : null,
       },
-      config: { weights: cfg.weights, radii: cfg.radii, offerTtlSec: cfg.offerTtlSec },
+      // No radii: dispatch is fleet-wide. distanceReferenceKm only normalises
+      // the ranking, so surfacing it as a radius would mislead whoever reads
+      // this panel into thinking distance still excludes riders.
+      config: {
+        weights: cfg.weights,
+        mode: cfg.mode,
+        distanceReferenceKm: cfg.distanceReferenceKm,
+        offerTtlSec: cfg.offerTtlSec,
+      },
     });
   } catch (err) {
     console.log("MFB-error-logs ~ dispatch status ~ err:", err);

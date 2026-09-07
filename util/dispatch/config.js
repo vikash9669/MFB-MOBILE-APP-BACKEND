@@ -33,34 +33,27 @@ const weights = () => ({
 });
 
 /**
- * Expanding search radii, in km. Stops as soon as enough candidates appear.
+ * Distance is no longer a filter — only a tie-breaker.
  *
- * The ladder ends at 15 rather than 10 because this app is used by single-stall
- * kitchens as well as restaurants, and a stall does not sit in a dense delivery
- * market — outside the couple of streets around it there may be no rider at
- * all, and a job that finds nobody by 10km was simply being abandoned. The
- * early rings are unchanged, so a nearby rider is still always preferred; the
- * extra ring only ever runs when the closer ones came back empty.
+ * The engine used to search expanding rings (DISPATCH_RADII_KM, 1→2→3→5→10→15)
+ * and offer only to riders inside the current one. Two problems killed that in
+ * practice. A rider whose dp_lat/dp_lng was NULL — one who has simply never
+ * reported a position — fell outside every ring at every radius, because the
+ * SQL used a BETWEEN on those columns; they were invisible to dispatch no
+ * matter how wide the search went. And for a single-stall kitchen there is
+ * often no rider within any sane radius at all, so jobs aged out having never
+ * been offered to the riders who were sitting online and idle.
  *
- * Widening is not free: 15km is a long approach on a bike, and scoring
- * normalises distance against the radius actually searched, so a 12km rider
- * found at 15km scores far worse than a 2km rider found at 3km. That is the
- * intended shape — reach further only when the alternative is nobody.
+ * So the offer now goes to EVERY online, approved, free rider. This value is
+ * kept only to normalise the distance term when ranking: at or beyond it the
+ * distance score is 0, nearer scores higher. It excludes nobody.
  */
-const radii = () =>
-  String(process.env.DISPATCH_RADII_KM || "1,2,3,5,10,15")
-    .split(",")
-    .map((r) => Number(r.trim()))
-    .filter((r) => Number.isFinite(r) && r > 0)
-    .sort((a, b) => a - b);
+const DISTANCE_REFERENCE_KM = 8;
 
 const config = () => ({
   weights: weights(),
-  radii: radii(),
+  distanceReferenceKm: DISTANCE_REFERENCE_KM,
 
-  // Enough candidates to stop widening the search. Ranking three riders and
-  // taking the best is worth far more than ranking thirty.
-  minCandidates: num(process.env.DISPATCH_MIN_CANDIDATES, 3),
   // Hard cap on how many riders we will ever offer one job to before giving up.
   maxOffersPerJob: num(process.env.DISPATCH_MAX_OFFERS, 8),
 
@@ -149,15 +142,13 @@ const config = () => ({
 
   // ── Dispatch model ──
   //
-  // "broadcast" offers a job to EVERY eligible rider within broadcastRadiusKm
-  // at once — first to accept wins (the claim in offers.js is already atomic) —
+  // "broadcast" offers a job to EVERY eligible rider — online, approved and
+  // not already on a delivery, at any distance — at once, and the first to
+  // accept wins (the claim in offers.js is already atomic) —
   // and re-broadcasts every broadcastTtlSec until adminEscalateMin, when a
   // human is pulled in. "targeted" is the original ranked, one-rider-at-a-time
   // ladder. Broadcast is the default; targeted stays available via env.
   mode: String(process.env.DISPATCH_MODE || "broadcast").toLowerCase(),
-  // Everyone within this many km is offered the job in broadcast mode. No
-  // expanding rings — the whole point is to reach the whole nearby fleet now.
-  broadcastRadiusKm: num(process.env.DISPATCH_BROADCAST_RADIUS_KM, 15),
   // How long one broadcast round stands before it is re-broadcast. The engine's
   // "has a live offer?" gate turns this straight into the re-broadcast spacing.
   broadcastTtlSec: num(process.env.DISPATCH_BROADCAST_TTL_SEC, 120),

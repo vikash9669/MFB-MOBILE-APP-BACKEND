@@ -1,11 +1,11 @@
-// Finds and ranks riders who could take a job.
+// Finds every rider who could take a job, and ranks them.
 //
 // Two stages, in this order for a reason:
 //
-//   1. ELIGIBILITY — hard rules. Offline, unapproved, at capacity, stale GPS,
-//      already rejected this job, too much cash on them. These are not
-//      penalties to be outweighed by a good score; a rider who is offline
-//      cannot take the job at any score.
+//   1. ELIGIBILITY — hard rules. Offline, unapproved, at capacity, already
+//      rejected this job, too much cash on them. These are not penalties to be
+//      outweighed by a good score; a rider who is offline cannot take the job
+//      at any score.
 //
 //   2. RANKING — everything else, via scoring.js.
 //
@@ -13,70 +13,64 @@
 // classic mistake: a heavily-weighted good factor eventually outranks the
 // penalty and the engine offers a job to someone who is asleep.
 //
-// The radius expands 1→2→3→5→10km and stops as soon as enough candidates are
-// found. The alternative — always searching 10km — makes the common case (a
-// rider is right there) pay the cost of the rare one.
+// DISTANCE IS NOT AN ELIGIBILITY RULE ANY MORE.
 //
-// GEO NOTE: this filters in SQL with a bounding box, then refines in JS with
-// haversine. MySQL has spatial types, but dp_lat/dp_lng are plain DECIMALs on
-// an existing table, and a bounding box on two indexed-able columns gets us the
-// same shortlist without a schema change or a spatial index to maintain.
+// This used to search expanding rings — 1→2→3→5→10→15km — with a SQL bounding
+// box on dp_lat/dp_lng, and offer only inside the current ring. That was
+// removed because it excluded the wrong people:
+//
+//   * A rider whose dp_lat/dp_lng is NULL fails a BETWEEN at every radius. A
+//     rider who has never reported a position was therefore invisible to
+//     dispatch permanently, however online and idle they were — observed live,
+//     with a rider 300m from the pickup and a search that had already widened
+//     to its maximum 15km reporting "no eligible riders in range".
+//   * Single-stall kitchens often have no rider inside any sane radius, so
+//     their jobs aged out having never been offered to anyone at all.
+//
+// So the offer now goes to EVERY online, approved, free rider. Distance still
+// ranks them (nearest first) and still shows on the offer card, but it turns
+// nobody away. The rider decides whether the trip is worth it — which they can
+// judge better than a radius can.
 const { Op } = require("sequelize");
 const { DeliveryPartner, DeliveryOrder } = require("../../models");
 const { haversineKm } = require("../geo");
 const { config } = require("./config");
 const { scoreRider } = require("./scoring");
 
-const KM_PER_DEG_LAT = 111;
-
-/** Degrees of longitude per km shrinks as you leave the equator. */
-const kmPerDegLng = (lat) => KM_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180) || KM_PER_DEG_LAT;
-
-/** A lat/lng box that fully contains the search circle. */
-function boundingBox(centre, radiusKm) {
-  const dLat = radiusKm / KM_PER_DEG_LAT;
-  const dLng = radiusKm / kmPerDegLng(centre.lat);
-  return {
-    minLat: centre.lat - dLat,
-    maxLat: centre.lat + dLat,
-    minLng: centre.lng - dLng,
-    maxLng: centre.lng + dLng,
-  };
-}
+// A wide net, but not an unbounded one: this becomes one push per rider, and a
+// runaway query on a bad day should degrade rather than fan out for ever.
+const MAX_FLEET = Number(process.env.DISPATCH_MAX_FLEET || 500);
 
 /**
- * Riders inside the box who pass every hard rule.
+ * Every rider who passes the hard rules, nearest first.
+ *
+ * `centre` is the pickup, used only to compute the distance shown on the offer
+ * and to order the results. It may be null — a job with no pickup coordinates
+ * still reaches the whole fleet, it just cannot say how far away it is.
  *
  * `excludeDpIds` carries riders who already rejected or were already offered
  * this job — an offer they turned down must not come back to them.
  */
-async function eligibleRiders(centre, radiusKm, { excludeDpIds = [], hasColumns } = {}) {
-  const box = boundingBox(centre, radiusKm);
+async function eligibleRiders(centre, { excludeDpIds = [], hasColumns } = {}) {
   const cfg = config();
 
   const where = {
     dp_online: 1,
     dp_active: 1,
     dp_verification_status: "approved",
-    dp_lat: { [Op.between]: [box.minLat, box.maxLat] },
-    dp_lng: { [Op.between]: [box.minLng, box.maxLng] },
   };
   if (excludeDpIds.length > 0) where.dp_id = { [Op.notIn]: excludeDpIds };
 
   // Only filter on columns the migration has actually added.
   if (hasColumns) {
     const cutoff = new Date(Date.now() - cfg.maxLocationAgeMin * 60_000);
-    // A rider who has never reported a location is allowed through on the
-    // strength of dp_lat/dp_lng; only a KNOWN-stale fix is disqualifying.
+    // A rider who has never reported a location is allowed through; only a
+    // KNOWN-stale fix is disqualifying. With the radius gone this matters more,
+    // not less — a null location is no longer a silent exclusion elsewhere.
     where[Op.or] = [{ dp_location_at: null }, { dp_location_at: { [Op.gte]: cutoff } }];
   }
 
-  const riders = await DeliveryPartner.findAll({
-    where,
-    // A wide net at the SQL layer; the real cut happens in JS below.
-    limit: 200,
-    raw: true,
-  });
+  const riders = await DeliveryPartner.findAll({ where, limit: MAX_FLEET, raw: true });
 
   if (riders.length === 0) return [];
 
@@ -96,11 +90,18 @@ async function eligibleRiders(centre, radiusKm, { excludeDpIds = [], hasColumns 
   }
 
   const now = Date.now();
+  const haveCentre =
+    centre != null && Number.isFinite(centre.lat) && Number.isFinite(centre.lng);
 
   return riders
     .map((r) => {
       const active = activeByRider.get(r.dp_id) ?? [];
-      const location = { lat: Number(r.dp_lat), lng: Number(r.dp_lng) };
+      const lat = Number(r.dp_lat);
+      const lng = Number(r.dp_lng);
+      // null, not a guess: "we don't know where this rider is" and "this rider
+      // is at 0,0" must not look the same to anything downstream.
+      const location =
+        Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
       // The drop of the job they are already on, for direction matching.
       const currentDrop =
         active[0]?.drop_lat != null
@@ -123,48 +124,43 @@ async function eligibleRiders(centre, radiusKm, { excludeDpIds = [], hasColumns 
           hasColumns && r.dp_last_offer_at
             ? (now - new Date(r.dp_last_offer_at).getTime()) / 60_000
             : null,
-        distanceKm: haversineKm(location, centre),
+        distanceKm: haveCentre && location ? haversineKm(location, centre) : null,
       };
     })
-    // The box is a square; the search is a circle.
-    .filter((r) => r.distanceKm <= radiusKm)
-    // At or over capacity — nothing to do with how good they are.
+    // At or over capacity — "not delivering any order" is the rule, and this is
+    // what enforces it.
     .filter((r) => r.activeJobs < Math.max(1, r.maxConcurrent))
     // Carrying too much cash for another COD job.
-    .filter((r) => r.cashInHand < cfg.maxCashInHand);
+    .filter((r) => r.cashInHand < cfg.maxCashInHand)
+    // Nearest first. Riders with no known position sort last rather than being
+    // dropped — they still get the call, they just are not presumed closest.
+    .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
 }
 
 /**
- * Expands the radius until enough candidates are found, then ranks them.
+ * The whole eligible fleet, ranked best-first.
  *
- * Returns { candidates, radiusKm, widened } — candidates best-first.
+ * Returns { candidates, reason } — no radius, because there is no longer one.
  */
 async function findCandidates(job, { excludeDpIds = [], hasColumns = false } = {}) {
-  const cfg = config();
-  const centre = { lat: Number(job.pickup_lat), lng: Number(job.pickup_lng) };
+  const lat = Number(job.pickup_lat);
+  const lng = Number(job.pickup_lng);
+  const centre =
+    Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 
-  if (!Number.isFinite(centre.lat) || !Number.isFinite(centre.lng)) {
-    return { candidates: [], radiusKm: null, reason: "job has no pickup coordinates" };
-  }
-
-  let found = [];
-  let usedRadius = cfg.radii[cfg.radii.length - 1];
-
-  for (const radius of cfg.radii) {
-    found = await eligibleRiders(centre, radius, { excludeDpIds, hasColumns });
-    usedRadius = radius;
-    if (found.length >= cfg.minCandidates) break;
-  }
+  const found = await eligibleRiders(centre, { excludeDpIds, hasColumns });
 
   if (found.length === 0) {
-    return { candidates: [], radiusKm: usedRadius, reason: "no eligible riders in range" };
+    // Deliberately not "in range" any more: range is not why. Either nobody is
+    // online, or everyone online is already on a delivery.
+    return { candidates: [], reason: "no online rider is free to take this job" };
   }
 
   const candidates = found
-    .map((rider) => ({ rider, ...scoreRider(rider, job, { maxRadiusKm: usedRadius }) }))
+    .map((rider) => ({ rider, ...scoreRider(rider, job) }))
     .sort((a, b) => b.score - a.score);
 
-  return { candidates, radiusKm: usedRadius, widened: usedRadius > cfg.radii[0] };
+  return { candidates, reason: null };
 }
 
-module.exports = { findCandidates, eligibleRiders, boundingBox };
+module.exports = { findCandidates, eligibleRiders };

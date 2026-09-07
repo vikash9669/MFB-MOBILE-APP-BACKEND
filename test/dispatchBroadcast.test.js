@@ -14,12 +14,15 @@ const offers = require("../util/dispatch/offers");
 // to land on the function offers actually calls.
 const sequelize = require("../util/database");
 
-test("broadcast config resolves to the 15km / 2-min / 4-min defaults", () => {
+test("broadcast reaches the whole fleet, on a 2-min / 4-min cadence", () => {
   const cfg = config();
   assert.strictEqual(cfg.mode, "broadcast");
-  assert.strictEqual(cfg.broadcastRadiusKm, 15);
   assert.strictEqual(cfg.broadcastTtlSec, 120);
   assert.strictEqual(cfg.adminEscalateMin, 4);
+  // There is no radius any more. A broadcast that still had one would quietly
+  // reintroduce the exclusion this change removed — a rider with no location
+  // fix, or one outside the ring, never hearing about the job at all.
+  assert.ok(!("broadcastRadiusKm" in cfg), "broadcast must not be bounded by distance");
 });
 
 test("createBroadcastOffers emits one row per rider and re-arms via ON DUPLICATE KEY", async () => {

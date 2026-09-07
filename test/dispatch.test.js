@@ -14,7 +14,6 @@ const assert = require("node:assert");
 
 const { scoreRider, travelMinutes, directionScore } = require("../util/dispatch/scoring");
 const { computeDispatchAt, remainingPrepMinutes } = require("../util/dispatch/timing");
-const { boundingBox } = require("../util/dispatch/riderSearch");
 const { config } = require("../util/dispatch/config");
 
 // Nimbahera-ish, so the numbers look like the ones in production.
@@ -98,12 +97,26 @@ describe("scoring", () => {
     }
   });
 
-  test("distance normalises against the search radius", () => {
-    // 1km out is poor within a 1km search and good within a 10km one.
-    const rNear = rider({ location: { lat: 24.6293, lng: 74.6786 } });
-    const tight = scoreRider(rNear, job, { maxRadiusKm: 1 });
-    const wide = scoreRider(rNear, job, { maxRadiusKm: 10 });
-    assert.ok(wide.parts.distance > tight.parts.distance);
+  test("a nearer rider still scores better than a far one", () => {
+    // Distance no longer gates eligibility, but it must still rank — otherwise
+    // a rider across the city outranks one outside the door on a tie-break.
+    const at = (lngOffset) =>
+      rider({ location: { lat: PICKUP.lat, lng: PICKUP.lng + lngOffset } });
+    const near = scoreRider(at(0.005), job);
+    const far = scoreRider(at(0.119), job);
+    assert.ok(near.parts.distance > far.parts.distance, "nearer must score higher");
+    assert.ok(near.score > far.score);
+  });
+
+  test("a rider with no known position is ranked, not discarded", () => {
+    // The bug this whole change exists to fix: a NULL dp_lat/dp_lng used to
+    // fail a SQL BETWEEN at every radius, making the rider permanently
+    // invisible. Scoring must now handle the absence without crashing and
+    // without flattering them to the front.
+    const unknown = scoreRider(rider({ location: null }), job);
+    assert.ok(Number.isFinite(unknown.score), "must produce a real score");
+    const near = scoreRider(rider({ location: { lat: PICKUP.lat, lng: PICKUP.lng + 0.005 } }), job);
+    assert.ok(near.score > unknown.score, "a known-near rider should still rank higher");
   });
 });
 
@@ -184,42 +197,46 @@ describe("immediate dispatch", () => {
   });
 });
 
-describe("search radius", () => {
-  test("the ladder reaches 15km", () => {
-    // A stall is not in a dense delivery market: past a couple of streets there
-    // may be no rider at all, and stopping at 10km abandoned those jobs.
-    const prev = process.env.DISPATCH_RADII_KM;
-    delete process.env.DISPATCH_RADII_KM;
-    try {
-      assert.deepEqual(config().radii, [1, 2, 3, 5, 10, 15]);
-    } finally {
-      if (prev !== undefined) process.env.DISPATCH_RADII_KM = prev;
-    }
+describe("fleet-wide dispatch", () => {
+  // Distance was removed as an eligibility rule. The engine used to search
+  // expanding rings and offer only inside the current one, which excluded two
+  // groups it should never have excluded: riders with a NULL dp_lat/dp_lng
+  // (invisible at every radius, because the SQL used a BETWEEN), and every
+  // rider around a single-stall kitchen with no fleet inside any sane radius.
+  // Observed live: a rider 300m from the pickup, a search already widened to
+  // its maximum 15km, and "no eligible riders in range".
+
+  test("no radius configuration survives", () => {
+    const cfg = config();
+    assert.ok(!("radii" in cfg), "the ring ladder must be gone");
+    assert.ok(!("broadcastRadiusKm" in cfg), "the broadcast radius must be gone");
+    assert.ok(!("minCandidates" in cfg), "widening thresholds must be gone");
   });
 
-  test("the near rings are unchanged, so a close rider still wins first", () => {
-    const prev = process.env.DISPATCH_RADII_KM;
-    delete process.env.DISPATCH_RADII_KM;
-    try {
-      const r = config().radii;
-      assert.deepEqual(r.slice(0, 4), [1, 2, 3, 5]);
-      assert.ok(r[r.length - 1] === 15, "15km must be the last resort, not the first");
-    } finally {
-      if (prev !== undefined) process.env.DISPATCH_RADII_KM = prev;
-    }
+  test("the distance reference ranks but never excludes", () => {
+    // Kept only to normalise the distance term. A rider beyond it scores 0 on
+    // distance and is still offered the job.
+    const cfg = config();
+    assert.strictEqual(cfg.distanceReferenceKm, 8);
+    const veryFar = scoreRider(
+      rider({ location: { lat: PICKUP.lat, lng: PICKUP.lng + 1.5 } }),
+      job,
+    );
+    assert.strictEqual(veryFar.parts.distance, 0, "distance term bottoms out");
+    assert.ok(veryFar.score > 0, "but the rider still scores and is still offered");
   });
 
-  test("a rider found at the widest ring scores worse than a near one", () => {
-    // Distance is normalised against the radius actually searched, so widening
-    // must not make a far rider look good. This is what stops 15km becoming a
-    // way to hand long jobs to whoever happens to be furthest away.
-    // ~1 degree of longitude here is about 101km, so these are roughly 2km and
-    // 12km from PICKUP. Everything except position is held equal.
-    const at = (lngOffset) =>
-      rider({ location: { lat: PICKUP.lat, lng: PICKUP.lng + lngOffset } });
-    const near = scoreRider(at(0.02), job, { maxRadiusKm: 15 });
-    const far = scoreRider(at(0.119), job, { maxRadiusKm: 15 });
-    assert.ok(near.score > far.score, `near ${near.score} should beat far ${far.score}`);
+  test("DISPATCH_RADII_KM is no longer read", () => {
+    // Someone will still have it set in an environment somewhere; it must be
+    // inert rather than quietly resurrecting the old behaviour.
+    const prev = process.env.DISPATCH_RADII_KM;
+    process.env.DISPATCH_RADII_KM = "1,2,3";
+    try {
+      assert.ok(!("radii" in config()));
+    } finally {
+      if (prev === undefined) delete process.env.DISPATCH_RADII_KM;
+      else process.env.DISPATCH_RADII_KM = prev;
+    }
   });
 });
 
@@ -284,17 +301,3 @@ describe("dispatch timing", () => {
   });
 });
 
-describe("search geometry", () => {
-  test("the box contains the circle", () => {
-    const box = boundingBox(PICKUP, 5);
-    assert.ok(box.maxLat > PICKUP.lat && box.minLat < PICKUP.lat);
-    assert.ok(box.maxLng > PICKUP.lng && box.minLng < PICKUP.lng);
-    // ~5km is ~0.045 degrees of latitude.
-    assert.ok(Math.abs(box.maxLat - PICKUP.lat - 0.045) < 0.005);
-  });
-
-  test("longitude spans wider than latitude away from the equator", () => {
-    const box = boundingBox(PICKUP, 5);
-    assert.ok(box.maxLng - box.minLng > box.maxLat - box.minLat);
-  });
-});

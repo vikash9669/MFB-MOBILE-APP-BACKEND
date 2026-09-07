@@ -66,21 +66,24 @@ function directionScore(rider, pickup) {
 /**
  * Scores one rider against one job. Returns 0..1 plus the breakdown.
  *
- * `maxRadiusKm` is the current search radius, used to normalise distance: at a
- * 1km radius, 900m is poor; at 10km it is excellent. Normalising against the
- * radius rather than a fixed constant keeps the term meaningful as the search
- * widens.
+ * Ranking only — nothing here excludes anyone. Distance used to be normalised
+ * against the search radius, which no longer exists; it is now measured against
+ * a fixed reference (config.distanceReferenceKm) so the term keeps its meaning
+ * without implying a limit. At or beyond that reference the distance term is 0,
+ * which ranks a far rider last but still offers them the job.
  */
-function scoreRider(rider, job, { maxRadiusKm, at = new Date() } = {}) {
-  const { weights } = config();
-  const radius = maxRadiusKm || 5;
+function scoreRider(rider, job, { at = new Date() } = {}) {
+  const { weights, distanceReferenceKm } = config();
+  const reference = distanceReferenceKm || 8;
 
   const pickup = { lat: job.pickup_lat, lng: job.pickup_lng };
-  const distanceKm = rider.location ? roadDistanceKm(rider.location, pickup) : radius;
+  // A rider whose position we do not know scores the reference distance: not
+  // penalised out of contention, not flattered into first place either.
+  const distanceKm = rider.location ? roadDistanceKm(rider.location, pickup) : reference;
   const etaMin = travelMinutes(distanceKm, rider.vehicleType, at);
 
-  // Closer is better, measured against how far we are currently willing to look.
-  const distance = clamp01(1 - distanceKm / radius);
+  // Closer is better, measured against a fixed reference rather than a radius.
+  const distance = clamp01(1 - distanceKm / reference);
 
   // 20 minutes to reach a restaurant is a bad pickup in any city.
   const eta = clamp01(1 - etaMin / 20);

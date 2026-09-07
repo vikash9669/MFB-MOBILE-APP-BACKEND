@@ -42,6 +42,13 @@ function remainingPrepMinutes({ prepMinutes, acceptedAt, readyInMin, now = new D
  *
  * Returns { dispatchAt, delayMin, reason } — dispatchAt is a Date, possibly now.
  */
+// How far we assume the winning rider will have to come, when we do not yet
+// know who wins. This was "the middle of the first search ring" — 1.5km, from
+// a radius ladder that no longer exists. The number is unchanged; only its
+// justification had to be, since dispatch now offers fleet-wide and there is no
+// first ring to take a middle of. Zero would dispatch late every time.
+const ASSUMED_APPROACH_KM = 1.5;
+
 function computeDispatchAt({
   prepMinutes,
   acceptedAt,
@@ -70,7 +77,7 @@ function computeDispatchAt({
         travelMinutes(
           Number.isFinite(expectedTravelKm) && expectedTravelKm > 0
             ? expectedTravelKm
-            : (cfg.radii[0] ?? 1) * 1.5,
+            : ASSUMED_APPROACH_KM,
           vehicleType,
           now
         )
@@ -84,7 +91,7 @@ function computeDispatchAt({
   // would dispatch late every time.
   const km = Number.isFinite(expectedTravelKm) && expectedTravelKm > 0
     ? expectedTravelKm
-    : (cfg.radii[0] ?? 1) * 1.5;
+    : ASSUMED_APPROACH_KM;
   const travel = travelMinutes(km, vehicleType, now);
 
   const raw = remaining - travel - cfg.pickupBufferMin;
