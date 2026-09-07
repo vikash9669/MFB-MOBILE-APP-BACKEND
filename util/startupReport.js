@@ -83,6 +83,21 @@ function warnings() {
   if ((process.env.PHONEPE_ENV || "UAT").toUpperCase() !== "PROD") {
     w.push("PHONEPE_ENV is not PROD — payments use test money.");
   }
+  // The gateway webhook is what turns a PENDING intent into a PAID order
+  // without the customer having to stay on the confirm screen. Its URL is built
+  // as `${PUBLIC_API_URL}/payment/callback`, and an unset value collapses that
+  // to the relative "/payment/callback", which no gateway can reach.
+  //
+  // Nothing errors when that happens. The payment succeeds at the bank, the
+  // callback is never delivered, and the intent sits PENDING until the sweeper
+  // gives up on it — the "charged with no order" case. Worth a line at boot
+  // because it is invisible until a real customer is out of pocket.
+  if (!set(process.env.PUBLIC_API_URL)) {
+    w.push(
+      "PUBLIC_API_URL is empty — the gateway webhook URL is relative and will never be called. " +
+        "Payments will stay PENDING even when the money has left the customer's account."
+    );
+  }
   if (/change_me|dev_access_secret/i.test(process.env.JWT_SECRET_KEY || "")) {
     w.push("JWT_SECRET_KEY still looks like the shipped default — anyone who knows it can mint tokens.");
   }
