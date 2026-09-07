@@ -18,7 +18,7 @@ const {
   Location,
   DeliveryOrder,
 } = require("../models");
-const { QueryTypes, fn } = require("sequelize");
+const { QueryTypes } = require("sequelize");
 const sequelize = require("./database");
 const { num, genOtp } = require("./delivery");
 const { geocode, roadDistanceKm, isGeocodingConfigured } = require("./geo");
@@ -243,19 +243,22 @@ async function createJobForOrder(orderId) {
 
     ...computeEarnings(distanceKm),
 
-    // Computed by MySQL, NOT passed as a JS Date — the same rule the rest of
-    // dispatch follows (util/dispatch/offers.js, engine.js).
+    // A JS Date, deliberately, and NOT fn("UTC_TIMESTAMP") — which is the
+    // opposite of the rule the rest of dispatch follows, for a reason.
     //
-    // The connection timezone is +05:30, so Sequelize serialises a JS Date
-    // into IST wall clock, while every other timestamp on this table is
-    // written with UTC_TIMESTAMP(). Reads do not convert back, so the two
-    // conventions came out of the same row 5h30m apart: an order offered at
-    // 06:49 UTC reported `offered_at: 12:19Z` next to `dispatch_at: 06:49Z`.
-    // Nothing compares this column against UTC_TIMESTAMP(), so the damage was
-    // confined to what operators read — but a queue screen showing a job
-    // offered five and a half hours in the future is not a small thing when
-    // you are trying to work out why a rider never came.
-    offered_at: fn("UTC_TIMESTAMP"),
+    // The connection timezone is +05:30, so this value makes a symmetric round
+    // trip: Sequelize writes it as IST wall clock and reads it back through the
+    // same offset, giving the correct instant. The columns written with
+    // UTC_TIMESTAMP() do NOT: MySQL stores true UTC, the driver reads it as if
+    // it were IST, and the value arrives in JS 5h30m early. That is why one row
+    // reports `offered_at: 12:19Z` beside `dispatch_at: 06:49Z` — offered_at is
+    // the one telling the truth.
+    //
+    // Inside SQL the UTC_TIMESTAMP() columns only ever meet each other, so
+    // dispatch timing is correct; the skew appears only on the way out to JS.
+    // Anything derived from those columns for a client must therefore cross the
+    // wire as a duration — see deadlineFor() in util/dispatch/offers.js.
+    offered_at: new Date(),
   });
 }
 

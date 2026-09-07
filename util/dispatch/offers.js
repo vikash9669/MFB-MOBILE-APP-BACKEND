@@ -179,10 +179,33 @@ async function createBroadcastOffers(job, candidates, round, ttlSec) {
   return candidates.length;
 }
 
-/** The live offer aimed at this rider right now, if any. */
+/**
+ * The live offer aimed at this rider right now, if any.
+ *
+ * `expires_in_sec` is the important field, not `expires_at`.
+ *
+ * Every timestamp in this table is in the DATABASE's clock, and that clock is
+ * not necessarily the world's: the production MySQL host reports UTC_TIMESTAMP()
+ * 5h30m behind real UTC. That is harmless while it only ever meets itself —
+ * dispatch compares UTC_TIMESTAMP() against columns written by UTC_TIMESTAMP(),
+ * so offers expire after the right NUMBER of seconds regardless.
+ *
+ * It stops being harmless the moment an absolute timestamp is handed to a
+ * phone, which has its own, correct clock. The rider app parsed expires_at,
+ * compared it against Date.now() and concluded the offer had lapsed five and a
+ * half hours ago: IncomingOrderScreen computed `left <= 0`, dismissed the
+ * ringing notification and navigated straight back. Riders never saw the offer.
+ * Observed exactly that — offer pending on the server, screen closing itself on
+ * the device.
+ *
+ * So the deadline crosses the wire as a DURATION, and the caller rebuilds an
+ * absolute instant on the Node clock. Durations are the same in every frame of
+ * reference; instants are not.
+ */
 async function liveOfferForRider(dpId) {
   const rows = await sequelize.query(
-    `SELECT o.\`offer_id\`, o.\`do_id\`, o.\`expires_at\`, o.\`distance_km\`, o.\`eta_min\`
+    `SELECT o.\`offer_id\`, o.\`do_id\`, o.\`expires_at\`, o.\`distance_km\`, o.\`eta_min\`,
+            TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), o.\`expires_at\`) AS \`expires_in_sec\`
        FROM \`store_delivery_offers\` o
       WHERE o.\`dp_id\` = :dpId
         AND o.\`state\` = 'pending'
@@ -192,6 +215,19 @@ async function liveOfferForRider(dpId) {
     { replacements: { dpId }, type: QueryTypes.SELECT }
   );
   return rows[0] ?? null;
+}
+
+/**
+ * Turns the database's remaining-seconds into a deadline the caller's clock
+ * agrees with. Null when there is no deadline to state.
+ */
+function deadlineFor(offer, { now = Date.now() } = {}) {
+  const secs = Number(offer?.expires_in_sec);
+  if (!Number.isFinite(secs)) return null;
+  // A non-positive remainder means it lapsed between the query and here; say so
+  // rather than inventing a deadline in the past that the app has to interpret.
+  if (secs <= 0) return null;
+  return new Date(now + secs * 1000).toISOString();
 }
 
 /**
@@ -318,5 +354,6 @@ module.exports = {
   excludedRiders,
   hasLiveOffer,
   liveOfferForRider,
+  deadlineFor,
   logDispatch,
 };

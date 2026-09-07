@@ -156,45 +156,82 @@ test("listing a customer or vendor touches no delivery flags", async () => {
   }
 });
 
-// ── 3. offered_at must be written in the same clock as everything else ────
+// ── 3. an offer deadline must cross the wire as a duration ───────────────
+//
+// The connection timezone is +05:30. A column written with UTC_TIMESTAMP()
+// holds true UTC, but the driver reads it back as though it were IST, so the
+// value reaches JS 5h30m early. Inside SQL those columns only ever meet each
+// other, so dispatch timing is right — the skew appears only on the way out.
+//
+// Handing that value to a phone is what broke the delivery call: the rider app
+// parsed expires_at, compared it against its own correct clock, decided the
+// offer had lapsed hours ago, dismissed the ringing notification and navigated
+// back. The offer was pending on the server the whole time. Observed live.
 
-test("a new delivery job takes offered_at from MySQL, not from a JS Date", () => {
-  // A JS Date is serialised in the connection timezone (+05:30) while every
-  // other timestamp on this table is UTC_TIMESTAMP(), so the same row reported
-  // `offered_at: 12:19Z` beside `dispatch_at: 06:49Z` — the same instant, 5h30m
-  // apart. Asserted on the source because the bug is in which expression is
-  // emitted, and the INSERT itself needs a database to observe.
+const { deadlineFor } = require("../util/dispatch/offers");
+
+test("a deadline is rebuilt on this process's clock, not the database's", () => {
+  const now = Date.UTC(2026, 8, 7, 12, 36, 0);
+  // What the database reports: 120 seconds left. Its absolute expires_at is
+  // hours away from `now` and is deliberately ignored.
+  const at = deadlineFor({ expires_in_sec: 120, expires_at: "2026-09-07T07:08:12.000Z" }, { now });
+  assert.strictEqual(at, new Date(now + 120_000).toISOString());
+});
+
+test("an offer with no time left yields no deadline rather than a past one", () => {
+  // A deadline already behind the client's clock is exactly what made the app
+  // throw good offers away, so never emit one.
+  for (const secs of [0, -1, -19800]) {
+    assert.strictEqual(deadlineFor({ expires_in_sec: secs }), null, `${secs}s must not produce a deadline`);
+  }
+});
+
+test("a missing or unusable remainder yields null, not an Invalid Date", () => {
+  for (const offer of [null, undefined, {}, { expires_in_sec: null }, { expires_in_sec: "soon" }]) {
+    assert.strictEqual(deadlineFor(offer), null, `${JSON.stringify(offer)} must yield null`);
+  }
+});
+
+test("the incoming-offer query asks the database for the remainder", () => {
+  // The fix only works if the SECONDS are computed inside SQL, where both sides
+  // of the subtraction are in the database's own clock.
+  const src = require("node:fs").readFileSync(
+    require.resolve("../util/dispatch/offers"),
+    "utf8"
+  );
+  // includes() rather than a regex: the SQL lives in a template literal with
+  // escaped backticks, and a failing regex assertion would dump the whole file.
+  assert.ok(
+    src.includes("TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP()"),
+    "the remainder must be computed inside SQL, in the database's own clock"
+  );
+  assert.ok(
+    src.includes("expires_in_sec"),
+    "liveOfferForRider must select the remaining seconds"
+  );
+});
+
+test("the rider endpoint sends the rebuilt deadline, never the raw column", () => {
+  const src = require("node:fs").readFileSync(
+    require.resolve("../controllers/deliveryOrders"),
+    "utf8"
+  );
+  assert.match(src, /expires_at:\s*deadlineFor\(offer\)/);
+  assert.doesNotMatch(
+    src,
+    /expires_at:\s*offer\.expires_at/,
+    "passing the database's own timestamp through is the bug"
+  );
+});
+
+test("offered_at stays a JS Date, which round-trips correctly", () => {
+  // The opposite of the rule the rest of dispatch follows, and deliberately so:
+  // Sequelize writes a Date in +05:30 and reads it back through the same
+  // offset, so this column is the one on the row telling the truth. Switching
+  // it to UTC_TIMESTAMP() would have broken a column that was already right.
   const src = require("node:fs").readFileSync(
     require.resolve("../util/deliveryDispatch"),
     "utf8"
   );
-  assert.match(
-    src,
-    /offered_at:\s*fn\("UTC_TIMESTAMP"\)/,
-    "offered_at must be computed by MySQL"
-  );
-  assert.doesNotMatch(
-    src,
-    /offered_at:\s*new Date\(\)/,
-    "a JS Date here writes IST wall clock into a UTC column"
-  );
-});
-
-test("fn(UTC_TIMESTAMP) really emits SQL rather than a bound parameter", () => {
-  // The whole fix rests on this: if Sequelize bound it as a parameter instead,
-  // the value would go back through the timezone-aware formatter and nothing
-  // would have changed.
-  const { Sequelize, DataTypes, fn } = require("sequelize");
-  const s = new Sequelize("db", "u", "p", {
-    dialect: "mysql",
-    logging: false,
-    timezone: "+05:30",
-  });
-  const M = s.define("t", { offered_at: { type: DataTypes.DATE } }, {
-    tableName: "t",
-    timestamps: false,
-  });
-  const qg = s.getQueryInterface().queryGenerator;
-  const { query } = qg.insertQuery("t", { offered_at: fn("UTC_TIMESTAMP") }, M.rawAttributes, {});
-  assert.match(query, /VALUES \(UTC_TIMESTAMP\(\)\)/);
+  assert.match(src, /offered_at:\s*new Date\(\)/);
 });

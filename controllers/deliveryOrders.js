@@ -25,6 +25,7 @@ const {
   acceptOffer,
   rejectOffer,
   liveOfferForRider,
+  deadlineFor,
 } = require("../util/dispatch/offers");
 
 // Same simple incentive model the Home summary uses (13 orders → ₹150 bonus).
@@ -95,7 +96,13 @@ exports.getIncoming = async (req, res) => {
       return res.json({
         order: serializeOrder(job),
         // Lets the app show a countdown instead of a silent disappearance.
-        expires_at: offer.expires_at,
+        //
+        // Rebuilt on THIS process's clock from the remaining seconds, never
+        // passed through from the database — see deadlineFor(). The raw column
+        // is in the database's clock, which on production runs 5h30m behind
+        // real UTC, and a phone comparing that against its own Date.now() threw
+        // every offer away as expired before the rider could see it.
+        expires_at: deadlineFor(offer),
       });
     }
 
