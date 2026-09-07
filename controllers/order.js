@@ -11,7 +11,7 @@ const {
   User,
 } = require("../models");
 
-const { getCouponCodeDetails } = require("../util/coupon");
+const { getCouponCodeDetails, listAvailableCoupons } = require("../util/coupon");
 const {
   priceCart,
   createOrder: createOrderRow,
@@ -540,6 +540,13 @@ const createOrder = async (req, res) => {
       .status(201)
       .json({ message: "Order created successfully", order: orderResponse });
   } catch (error) {
+    // Same rule as the online path: a cart problem the customer can act on is
+    // a 400 carrying the reason ("This restaurant does not deliver to the
+    // selected address" is the one that matters most here), while a real fault
+    // stays a generic 500. See util/orders.js::cartRefusal.
+    if (error?.clientSafe) {
+      return res.status(400).json({ message: error.message });
+    }
     console.error(error);
     res
       .status(500)
@@ -561,10 +568,47 @@ const getCouponCodeDiscountDetails = async (req, res) => {
   res.status(200).json(result);
 };
 
+// POST /user/coupons/available
+// { business_user_id, product_ids, order_amount } -> the offers this cart can use.
+//
+// Authenticated, unlike the /coupon preview beside it, and that is the point:
+// the per-user usage limit can only be enforced with an identity, so an
+// anonymous version would advertise codes the customer has already spent. See
+// util/coupon.js::usageRemaining.
+const getAvailableCoupons = async (req, res) => {
+  try {
+    const { business_user_id, product_ids, order_amount } = req.body || {};
+
+    // The cart's subtotal is what every threshold and percentage is computed
+    // against, so without it the answer would be a guess. Zero is a legitimate
+    // value (an empty cart shows only what the customer could work towards).
+    const orderAmount = Number(order_amount);
+    if (!Number.isFinite(orderAmount) || orderAmount < 0) {
+      return res.status(400).json({ message: "order_amount is required" });
+    }
+
+    const coupons = await listAvailableCoupons({
+      orderAmount,
+      businessUserId: business_user_id,
+      productIds: Array.isArray(product_ids) ? product_ids : undefined,
+      userId: req.user?.user_id,
+    });
+
+    res.status(200).json({ coupons });
+  } catch (err) {
+    console.log("MFB-error-logs ~ available coupons ~ err:", err);
+    // Deliberately a 200 with nothing rather than an error: this list is a
+    // convenience beside a coupon box that still works by hand. A checkout
+    // screen must not break because the offers panel could not be built.
+    res.status(200).json({ coupons: [] });
+  }
+};
+
 module.exports = {
   getOrdersByCustomerId,
   createOrder,
   getActiveOrders,
+  getAvailableCoupons,
   getOrderRoute,
   getCouponCodeDiscountDetails,
 };

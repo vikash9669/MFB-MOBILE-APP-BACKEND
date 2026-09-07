@@ -47,8 +47,11 @@ const PaymentIntent = sequelize.define(
       type: DataTypes.TEXT("long"),
       allowNull: false,
     },
-    // UPI | CARD — what the customer picked in the app. The gateway reports
-    // the instrument actually used; this is only the requested preference.
+    // ONLINE | COD, plus UPI | CARD on rows written by older app versions that
+    // still asked the customer to pick an instrument up front. Only ever the
+    // requested preference — the gateway reports the instrument actually used.
+    // The default stays "UPI" so existing rows and the column DDL in
+    // util/schema/definitions.js are left alone; every caller sets it anyway.
     method: {
       type: DataTypes.STRING(16),
       allowNull: false,

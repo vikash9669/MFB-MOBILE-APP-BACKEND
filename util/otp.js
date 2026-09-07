@@ -10,7 +10,32 @@ const twilio = require("./twilio");
 
 const PROVIDERS = { otpless, msg91, twilio };
 
-const isDevMode = () => process.env.OTP_DEV_MODE === "true";
+/**
+ * The blanket dev bypass — every number accepts OTP_DEV_CODE.
+ *
+ * REFUSED IN PRODUCTION, whatever the env var says.
+ *
+ * OTP is the only thing standing between a phone number and the account behind
+ * it. With this on, anyone who types a customer's, vendor's or rider's number
+ * and the dev code is inside their account — order history, saved addresses,
+ * wallet, the lot — and because no SMS is sent, the real owner is never told.
+ * It is an unauthenticated takeover of every account on the platform.
+ *
+ * It was found switched on in production (the boot banner warned about it for
+ * who knows how long, and a warning nobody acts on is not a control). So the
+ * setting is now ignored when NODE_ENV=production rather than merely
+ * complained about: the wrong value can no longer open the door, and it closes
+ * on deploy without waiting for anyone to edit an env var.
+ *
+ * Deliberately fail-safe rather than fail-fast — refusing to boot would take
+ * the platform down to fix a hole that this simply closes. OTP_DEV_NUMBERS
+ * still works: a short, named list of QA numbers is a different thing from
+ * "every number in existence", and it is what testing on production should use.
+ */
+const isDevMode = () => {
+  if ((process.env.NODE_ENV || "development") === "production") return false;
+  return process.env.OTP_DEV_MODE === "true";
+};
 const DEV_OTP_CODE = () => process.env.OTP_DEV_CODE || "123456";
 
 // Last 10 digits, so "+91 96699 01922", "9669901922" etc. all compare equal.

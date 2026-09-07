@@ -13,7 +13,16 @@ const {
   statusFor,
 } = require("../util/codCollection");
 
-const ONLINE_METHODS = ["UPI", "CARD"];
+// What the app may ask for. ONLINE is what the current checkout sends: it
+// offers a single "Pay online" row and lets the gateway's own screen choose the
+// instrument, so the app no longer has an opinion about UPI vs card.
+//
+// UPI and CARD stay accepted deliberately. This backend deploys the moment it
+// is pushed, while installed copies of the app update whenever each customer
+// gets round to it — some never do. Narrowing this list to ["ONLINE"] would
+// answer every one of those older apps with "Unsupported payment method: UPI"
+// and break online payment for everybody who had not yet updated.
+const ONLINE_METHODS = ["ONLINE", "UPI", "CARD"];
 
 
 // Cashfree requires a customer id and a 10-digit phone on every order;
@@ -197,6 +206,13 @@ const initiatePayment = async (req, res) => {
       flow: "sdk",
     });
   } catch (error) {
+    // A cart the customer can fix is a 400 with the reason, not a 500 with a
+    // shrug. priceCart marks those (util/orders.js::cartRefusal); anything
+    // without the mark is a genuine fault and stays generic, so an internal
+    // error never leaks out through this branch.
+    if (error?.clientSafe) {
+      return res.status(400).json({ message: error.message });
+    }
     console.error("MFB-error-logs ~ initiatePayment:", error);
     res
       .status(500)
@@ -232,7 +248,32 @@ const confirmPayment = async (req, res) => {
       return res.status(200).json({ status: "PAID", order });
     }
 
-    const status = await gateway.fetchStatus(merchant_txn_id);
+    // An unreachable gateway means UNKNOWN, and unknown is not failure.
+    //
+    // fetchStatus throws on a 5xx (softStatus only lets 4xx through), so a
+    // provider outage came back as a bare 500 "Could not confirm payment" —
+    // observed here when Cashfree's sandbox started answering 504 mid-run. The
+    // customer may well have paid; we simply could not ask. Reporting that as
+    // an error tells them nothing and makes the app burn its retries.
+    //
+    // PENDING is the honest answer and the safe one: util/paymentSweeper.js
+    // reconciles the intent once the provider is answering again, so the order
+    // still lands without the customer doing anything. It is also the only
+    // answer that cannot invite a second payment — see the note below on why
+    // "definite no" is a dangerous thing to say.
+    let status;
+    try {
+      status = await gateway.fetchStatus(merchant_txn_id);
+    } catch (err) {
+      console.log(
+        `MFB ~ confirmPayment ~ ${gateway.name} unreachable for ${merchant_txn_id}:`,
+        err.message
+      );
+      return res.status(202).json({
+        status: "PENDING",
+        message: "We couldn't reach the payment provider. We'll confirm your order shortly.",
+      });
+    }
 
     if (status.pending) {
       return res

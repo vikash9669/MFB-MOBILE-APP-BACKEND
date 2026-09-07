@@ -20,6 +20,11 @@ router.get("/orders", verifyToken, orderController.getOrdersByCustomerId);
 
 router.post("/create-order", verifyToken, orderController.createOrder);
 
+// The offers panel on the checkout screen. Authenticated, so per-user usage
+// limits are enforced and a code the customer has already spent is never
+// advertised to them — the public /coupon preview cannot do that.
+router.post("/coupons/available", verifyToken, orderController.getAvailableCoupons);
+
 router.get("/active-orders", verifyToken, orderController.getActiveOrders);
 
 // The line drawn on the customer's tracking map. Authorised by order

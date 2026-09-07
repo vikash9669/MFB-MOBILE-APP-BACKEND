@@ -25,6 +25,7 @@ const paymentRoutes = require("./routes/payment");
 const healthRoutes = require("./routes/health");
 const { ensureSchema, pending } = require("./util/schema");
 const { reportBoot, reportListening, reportFatal } = require("./util/startupReport");
+const { assertProductionSafe } = require("./util/securityGate");
 const { requestLog } = require("./middlewares/requestLog");
 
 // Every per-IP rate limit reads req.ip, which Express derives from the socket
@@ -112,6 +113,20 @@ app.use("/", productRoutes);
 app.use("/user", userRoutes);
 app.use("/", addressRoutes);
 app.use("/banners", bannerRoutes);
+
+// Before anything else touches the network or the database: refuse to serve
+// production traffic with a signing key anyone could guess. See
+// util/securityGate.js.
+//
+// Caught and exited here rather than left to throw, so the operator gets the
+// instructions and not a stack trace — and non-zero, so the host reports a
+// failed deploy instead of a healthy one serving forged tokens.
+try {
+  assertProductionSafe();
+} catch (err) {
+  console.error(err.message);
+  process.exit(1);
+}
 
 sequelize
   .sync({ logging: false })

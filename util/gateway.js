@@ -72,6 +72,8 @@ const phonepeDriver = {
       : null;
   },
 
+  // PhonePe has no per-attempt list and so no no-attempt window; the options
+  // argument is accepted and ignored so callers need not branch on provider.
   fetchStatus: (merchantOrderId) => phonepe.fetchStatus(merchantOrderId),
   qrFetchStatus: (merchantOrderId) => dqr.fetchQrStatus(merchantOrderId),
 
@@ -131,9 +133,9 @@ const cashfreeDriver = {
     return cashfree.createUpiQr(args);
   },
 
-  fetchStatus: (id) => cashfree.fetchStatus(id),
+  fetchStatus: (id, opts) => cashfree.fetchStatus(id, opts),
   // No separate offline ledger — the same order status answers both.
-  qrFetchStatus: (id) => cashfree.fetchStatus(id),
+  qrFetchStatus: (id, opts) => cashfree.fetchStatus(id, opts),
 
   refundPayment: (args) => cashfree.refundPayment(args),
   fetchRefundStatus: (args) => cashfree.fetchRefundStatus(args),

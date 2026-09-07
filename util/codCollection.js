@@ -317,7 +317,34 @@ async function statusFor(intent) {
   if (isUpiPayload(intent.collect_url) && gateway.qrConfigured()) {
     return gateway.qrFetchStatus(intent.merchant_txn_id);
   }
-  return gateway.fetchStatus(intent.merchant_txn_id);
+  // A doorstep QR is SUPPOSED to sit untouched for a while.
+  //
+  // The checkout flow treats "created, no payment attempt, more than a minute
+  // old" as abandoned, because there the customer is standing in front of an
+  // open SDK and comes back within seconds. Here the opposite is true: the
+  // rider shows a QR and the customer finds their phone, unlocks it, picks an
+  // app. Minutes of nothing is the normal case, not a failure.
+  //
+  // Applying the checkout window here killed live collections — observed in the
+  // sandbox, where a QR raised seconds earlier was marked FAILED by the next
+  // status poll and the following request opened a SECOND payment link for the
+  // same delivery. Two live links for one order is how a customer pays twice.
+  //
+  // So the window is the collection's own: unpaid is "still waiting" right up
+  // until the intent expires, at which point expires_at makes it unusable
+  // anyway and a fresh QR is the correct answer.
+  // The remainder comes from SQL (expires_in_sec), NOT from subtracting
+  // Date.parse(expires_at) from Date.now(). expires_at is written by
+  // UTC_TIMESTAMP() and read back through the +05:30 connection timezone, so in
+  // JS it lands 5h30m early — every window computed that way came out hugely
+  // negative and every QR was instantly "expired". Same trap as the offer
+  // deadline in util/dispatch/offers.js; durations cross clocks, instants do
+  // not. Absent (an older caller that did not select it) means no benefit of
+  // the doubt, which is the safe direction here.
+  const secs = Number(intent.expires_in_sec);
+  return gateway.fetchStatus(intent.merchant_txn_id, {
+    noAttemptGraceMs: Number.isFinite(secs) ? Math.max(0, secs) * 1000 : 0,
+  });
 }
 
 // dpId is accepted so callers can pass the whole job object, but the lookup
@@ -327,7 +354,8 @@ async function checkCollection({ doId }) {
 
   const rows = await sequelize.query(
     `SELECT \`pi_id\`, \`merchant_txn_id\`, \`amount\`, \`status\`, \`customer_id\`, \`do_id\`,
-            \`collect_url\`, \`expires_at\`
+            \`collect_url\`, \`expires_at\`,
+            TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), \`expires_at\`) AS \`expires_in_sec\`
        FROM \`store_payment_intents\`
       WHERE \`do_id\` = :doId AND \`purpose\` = :purpose
       ORDER BY \`pi_id\` DESC LIMIT 1`,
@@ -409,8 +437,11 @@ async function pendingCollections(limit = 20) {
   return sequelize.query(
     // collect_url comes along because statusFor needs it to pick which PhonePe
     // product to ask.
+    // expires_in_sec so statusFor knows how much of the collection window is
+    // left — computed in SQL for the reason given there.
     `SELECT \`pi_id\`, \`merchant_txn_id\`, \`amount\`, \`status\`, \`customer_id\`, \`do_id\`,
-            \`collect_url\`
+            \`collect_url\`,
+            TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), \`expires_at\`) AS \`expires_in_sec\`
        FROM \`store_payment_intents\`
       WHERE \`purpose\` = :purpose AND \`status\` = 'PENDING'
         AND \`createdAt\` >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)

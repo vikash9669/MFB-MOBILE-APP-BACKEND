@@ -204,17 +204,12 @@ test("a non-https notify_url is dropped rather than sent", async () => {
 
 // ── status mapping ─────────────────────────────────────────────────────────
 
-test("PAID is success, ACTIVE is pending, EXPIRED is neither", async () => {
+test("PAID is success, EXPIRED is neither", async () => {
   await withEnv(CREDS, async () => {
     const cashfree = load("../util/cashfree");
 
-    queued.push(reply({ order_status: "ACTIVE", cf_order_id: "cf1" }));
-    let s = await cashfree.fetchStatus("MFB1");
-    assert.equal(s.pending, true);
-    assert.equal(s.success, false);
-
     queued.push(reply({ order_status: "EXPIRED", cf_order_id: "cf1" }));
-    s = await cashfree.fetchStatus("MFB1");
+    let s = await cashfree.fetchStatus("MFB1");
     assert.equal(s.pending, false);
     assert.equal(s.success, false);
 
@@ -224,6 +219,145 @@ test("PAID is success, ACTIVE is pending, EXPIRED is neither", async () => {
     assert.equal(s.success, true);
     assert.equal(s.providerTxnId, "555");
     assert.equal(s.instrument, "upi");
+  });
+});
+
+// ── ACTIVE: in flight, or abandoned? ───────────────────────────────────────
+//
+// order_status ACTIVE means only "no successful payment yet". It covers money
+// genuinely moving at the customer's bank AND a checkout sheet they opened and
+// backed out of. Calling both PENDING is what stranded customers on "Payment is
+// still being confirmed by the bank — do not pay again" with Pay Now disabled,
+// waiting on a confirmation that was never coming. Only the per-attempt
+// payment_status separates them.
+
+const ACTIVE_NOW = (extra = {}) => ({
+  order_status: "ACTIVE",
+  cf_order_id: "cf1",
+  created_at: new Date().toISOString(),
+  ...extra,
+});
+
+test("ACTIVE with an attempt still running is pending", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    queued.push(reply(ACTIVE_NOW()));
+    queued.push(reply([{ payment_status: "PENDING", cf_payment_id: 1 }]));
+    const s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, true, "money may be in flight — never say failed");
+    assert.equal(s.success, false);
+  });
+});
+
+test("ACTIVE with a dropped attempt is a retryable failure, not pending", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    // The exact case from the customer app: sheet opened, customer backed out.
+    for (const status of ["USER_DROPPED", "FAILED", "CANCELLED", "VOID"]) {
+      queued.push(reply(ACTIVE_NOW()));
+      queued.push(reply([{ payment_status: status, cf_payment_id: 1 }]));
+      const s = await cashfree.fetchStatus("MFB1");
+      assert.equal(s.pending, false, `${status} must not read as pending`);
+      assert.equal(s.success, false, `${status} must not read as paid`);
+    }
+  });
+});
+
+test("NOT_ATTEMPTED is a placeholder, not a failed attempt", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    // Cashfree stamps one of these on an order the moment it is created.
+    // Reading it as a finished attempt made every freshly raised doorstep QR
+    // FAILED on its first status poll, and let a second payment link be opened
+    // for the same delivery. Only the live API produces these rows, which is
+    // why the stubs above never caught it.
+    queued.push(reply(ACTIVE_NOW()));
+    queued.push(reply([{ payment_status: "NOT_ATTEMPTED", cf_payment_id: 1 }]));
+    let s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, true, "nothing has been tried yet — still waiting");
+
+    // And it must not shortcut the window either: past it, still abandoned.
+    queued.push(reply(ACTIVE_NOW({ created_at: new Date(Date.now() - 3_600_000).toISOString() })));
+    queued.push(reply([{ payment_status: "NOT_ATTEMPTED" }]));
+    s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, false, "beyond the window it is abandoned");
+    assert.equal(s.message, "Payment was not completed", "not 'attempt did not succeed'");
+  });
+});
+
+test("a dropped attempt reports why, so the customer can be told to retry", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    queued.push(reply(ACTIVE_NOW()));
+    queued.push(reply([{ payment_status: "FAILED", payment_message: "Insufficient funds" }]));
+    const s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.message, "Insufficient funds");
+  });
+});
+
+test("a fresh order with no attempt yet is pending, an old one is not", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+
+    // The SDK has just opened; Cashfree has not recorded an attempt yet.
+    // Declaring this failed would write off payments about to happen.
+    queued.push(reply(ACTIVE_NOW()));
+    queued.push(reply([]));
+    let s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, true, "inside the grace window");
+
+    // Long past that, an order nobody ever tried to pay is abandoned.
+    queued.push(reply(ACTIVE_NOW({ created_at: new Date(Date.now() - 3_600_000).toISOString() })));
+    queued.push(reply([]));
+    s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, false, "beyond the grace window");
+  });
+});
+
+test("the caller decides how long 'no attempt yet' is normal", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    // A doorstep QR legitimately sits untouched for minutes while the customer
+    // finds their phone — the opposite of a checkout SDK, where the customer is
+    // back within seconds. Applying the checkout window to a QR marked live
+    // collections FAILED and let a second payment link be opened for the same
+    // delivery. Observed in the sandbox.
+    const old = { order_status: "ACTIVE", created_at: new Date(Date.now() - 5 * 60_000).toISOString() };
+
+    queued.push(reply(old));
+    queued.push(reply([]));
+    let s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, false, "five minutes is abandoned at checkout");
+
+    queued.push(reply(old));
+    queued.push(reply([]));
+    s = await cashfree.fetchStatus("MFB1", { noAttemptGraceMs: 15 * 60_000 });
+    assert.equal(s.pending, true, "five minutes is still waiting at the door");
+  });
+});
+
+test("a caller-supplied window never overrides a finished attempt", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    // The window only covers "nothing has been tried". Once an attempt exists
+    // and is dead, no amount of patience makes it pending again.
+    queued.push(reply({ order_status: "ACTIVE", created_at: new Date().toISOString() }));
+    queued.push(reply([{ payment_status: "USER_DROPPED" }]));
+    const s = await cashfree.fetchStatus("MFB1", { noAttemptGraceMs: 60 * 60_000 });
+    assert.equal(s.pending, false);
+  });
+});
+
+test("an unusable payments list falls back to pending, never to failed", async () => {
+  await withEnv(CREDS, async () => {
+    const cashfree = load("../util/cashfree");
+    // Nothing queued for the payments call, so the stub throws. Guessing
+    // "failed" here could invite a second charge on a live payment; guessing
+    // "pending" only costs a retry.
+    queued.push(reply({ order_status: "ACTIVE", cf_order_id: "cf1" }));
+    const s = await cashfree.fetchStatus("MFB1");
+    assert.equal(s.pending, true);
+    assert.equal(s.success, false);
   });
 });
 

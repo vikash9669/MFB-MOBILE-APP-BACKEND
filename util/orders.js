@@ -20,6 +20,25 @@ const { queueDeliveryJob } = require("./deliveryDispatch");
 
 // Prices a cart. Returns every figure store_orders needs, so the caller only
 // decides the payment columns.
+/**
+ * A refusal the customer is allowed to read.
+ *
+ * priceCart's checks are all things the person at the checkout screen can act
+ * on — an empty cart, an address the restaurant does not serve. They were plain
+ * Errors, so every caller's catch turned them into "Could not start payment" /
+ * HTTP 500: the customer was told the system had broken when in fact their cart
+ * had a fixable problem, and nothing on screen said which. Verified against the
+ * sandbox — an empty cart answered 500 with no reason.
+ *
+ * `clientSafe` is what lets a controller answer 400 with this text while still
+ * hiding genuine internal failures behind a generic message.
+ */
+const cartRefusal = (message) => {
+  const err = new Error(message);
+  err.clientSafe = true;
+  return err;
+};
+
 const priceCart = async ({
   address_id,
   product_ids_with_quantity,
@@ -42,8 +61,25 @@ const priceCart = async ({
     where: { user_id: business_user_id },
   });
 
-  if (address == null) throw new Error("Address not found");
-  if (business == null) throw new Error("Restaurant not found");
+  if (address == null) throw cartRefusal("Address not found");
+  if (business == null) throw cartRefusal("Restaurant not found");
+
+  // An empty cart is not a cheap order, it is not an order.
+  //
+  // Delivery charges are added below regardless of what is being delivered, so
+  // a cart with no items still priced at the delivery fee — a positive payable
+  // that sailed through the `payable > 0` check in initiatePayment. Verified
+  // against Cashfree sandbox: an empty cart produced a real ₹15 gateway order
+  // with a live payment session. Paying it would have charged a customer for
+  // nothing and created an order with no items in it.
+  //
+  // Checked on the RESOLVED products, not on the ids that were asked for, so a
+  // cart naming only products that do not exist (or belong to another vendor,
+  // or are delisted) is refused too rather than silently becoming a bare
+  // delivery fee.
+  if (productDetails.length === 0) {
+    throw cartRefusal("Your cart is empty");
+  }
 
   const areaDetails = await Area.findOne({
     where: {
@@ -55,7 +91,7 @@ const priceCart = async ({
   });
 
   if (areaDetails == null) {
-    throw new Error("This restaurant does not deliver to the selected address");
+    throw cartRefusal("This restaurant does not deliver to the selected address");
   }
 
   const orderAmount = productDetails.reduce(
@@ -92,9 +128,21 @@ const priceCart = async ({
   const order_discount =
     couponCodeDetails.discount > 0 ? couponCodeDetails.discount : businessDiscount;
 
-  // What store_orders.order_amount holds: goods after the vendor discount,
-  // plus rain surcharge, before delivery.
-  const order_amount = orderAmount - businessDiscount + rainCharges;
+  // What store_orders.order_amount holds: goods BEFORE any discount, plus rain
+  // surcharge, before delivery.
+  //
+  // Gross, not net, because every consumer of these columns computes the total
+  // as `order_amount + delivery_charges - order_discount` — the app's My Orders
+  // and tracking screens, the rider's cash-to-collect in util/deliveryDispatch.js,
+  // and the panel in controllers/admin/orders.js. Subtracting businessDiscount
+  // here as well as reporting it in order_discount deducted a vendor discount
+  // TWICE: a ₹150 cart at a 20% vendor discount stored 120/30/15 and so charged
+  // ₹105, while the cart screen had shown the customer ₹135.
+  //
+  // Latent rather than live — every vendor currently runs business_discount = 0,
+  // which is why it survived — but it would have fired the moment a vendor
+  // discount was set in the panel. With that column at 0 this line is unchanged.
+  const order_amount = orderAmount + rainCharges;
 
   // What the customer actually pays, and so what we charge via PhonePe. This
   // matches the total the cart screen renders.

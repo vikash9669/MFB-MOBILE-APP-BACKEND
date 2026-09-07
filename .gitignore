@@ -73,7 +73,14 @@ web_modules/
 .yarn-integrity
 
 # dotenv environment variable files
+#
+# The catch-all matters more than the named entries: any .env.<something> is
+# built by copying the real one and overriding a few keys, so it carries every
+# live credential the original had. .env.example is the deliberate exception —
+# it holds placeholders and is meant to be committed.
 .env
+.env.*
+!.env.example
 .env.development.local
 .env.test.local
 .env.production.local

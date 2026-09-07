@@ -179,15 +179,88 @@ const createHostedCheckout = async ({ redirectUrl, ...rest }) => {
   };
 };
 
+// Per-attempt outcomes, from Cashfree's payment_status vocabulary.
+//
+// IN_FLIGHT is the only set that justifies telling a customer "your payment is
+// still being confirmed — do not pay again". Everything in ATTEMPT_DEAD is over,
+// no money moved, and the honest answer is "that didn't work, try again".
+const ATTEMPT_IN_FLIGHT = new Set(["PENDING"]);
+const ATTEMPT_DEAD = new Set(["FAILED", "USER_DROPPED", "CANCELLED", "VOID"]);
+
+// NOT_ATTEMPTED is deliberately in NEITHER set: it is a placeholder row, not an
+// outcome. Cashfree stamps one on an order as soon as it is created, before
+// anybody has touched it.
+//
+// Counting it as a finished attempt made "all attempts are dead" true the
+// instant an order existed, so every doorstep QR was marked FAILED by the first
+// status poll after it was raised — and the next request opened a second
+// payment link for the same delivery. Caught in the sandbox, not by any unit
+// test, because only the real API returns these rows.
+const ATTEMPT_NOT_STARTED = new Set(["NOT_ATTEMPTED"]);
+
+/** Attempts that represent something actually having been tried. */
+const realAttempts = (attempts) =>
+  attempts.filter((p) => !ATTEMPT_NOT_STARTED.has(p?.payment_status));
+
+// How long an order with NO attempt on it at all is still given the benefit of
+// the doubt.
+//
+// Sized against what this window actually protects, which is narrower than it
+// first looks. Money cannot move without Cashfree recording an attempt, and a
+// UPI request sitting unanswered in someone's bank app IS an attempt — a
+// PENDING one, caught by the check above. So the only thing left to cover here
+// is the few seconds between Cashfree accepting a payment and its API showing
+// it. A minute is generous for that.
+//
+// Longer would be worse, not safer: an order with no attempt on it is one the
+// customer abandoned, and every extra second of grace is a second they spend
+// looking at "confirming your payment" with checkout disabled.
+const NO_ATTEMPT_GRACE_MS = Number(process.env.CASHFREE_NO_ATTEMPT_GRACE_MS || 60_000);
+
+/** The attempts on an order. Best-effort: [] rather than throwing. */
+const listPayments = async (merchantOrderId) => {
+  const { api } = config();
+  try {
+    const { data } = await axios.get(
+      `${api}/orders/${encodeURIComponent(merchantOrderId)}/payments`,
+      { headers: headers(), timeout: 15000, validateStatus: softStatus }
+    );
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.log("MFB ~ cashfree ~ payments lookup ~", err.message);
+    return [];
+  }
+};
+
+/**
+ * Whether an unpaid order still has something happening on it.
+ *
+ * Deliberately conservative in one direction only: when the payments list is
+ * unavailable we fall back to the grace window rather than declaring failure,
+ * because telling someone a payment failed when it is in flight invites a second
+ * charge. The opposite mistake — a stuck "confirming" screen — only costs a
+ * retry.
+ */
+const isStillInFlight = (state, attempts, order, graceMs = NO_ATTEMPT_GRACE_MS) => {
+  if (state !== "ACTIVE") return false;
+  if (attempts.some((p) => ATTEMPT_IN_FLIGHT.has(p?.payment_status))) return true;
+  // Something was really tried and every attempt is finished: not in flight.
+  // Placeholder rows do not count — see ATTEMPT_NOT_STARTED.
+  if (realAttempts(attempts).length > 0) return false;
+
+  const createdAt = Date.parse(order?.created_at ?? "");
+  if (!Number.isFinite(createdAt)) return true; // unknown age — assume in flight
+  return Date.now() - createdAt < graceMs;
+};
+
 /**
  * Server-side truth for an order.
  *
  * Two calls, because they answer different questions and Cashfree splits them:
  * the order says whether it is PAID, the payments list says which attempt did
- * it and by what instrument. The second is best-effort — a settled order must
- * not be held up because the payments lookup failed.
+ * it, by what instrument, and — crucially — whether anything is still running.
  */
-const fetchStatus = async (merchantOrderId) => {
+const fetchStatus = async (merchantOrderId, { noAttemptGraceMs } = {}) => {
   const { api } = config();
 
   const { data, status } = await axios.get(
@@ -207,32 +280,45 @@ const fetchStatus = async (merchantOrderId) => {
     };
   }
 
-  // ACTIVE = created, nobody has paid yet. That is PENDING to us, not failure.
   const state = data?.order_status || "UNKNOWN";
   const success = state === "PAID";
-  const pending = state === "ACTIVE";
 
   let providerTxnId = null;
   let instrument = null;
   let message = state;
 
+  // The payments list is fetched for ACTIVE as well as PAID, and that is the
+  // whole point of this function.
+  //
+  // ACTIVE only means "no successful payment yet". It covers two situations
+  // that could not be more different to a customer: money genuinely in flight
+  // at their bank, and a checkout sheet they opened and backed out of. Treating
+  // both as PENDING is what produced the bug this replaces — a customer who
+  // dismissed the Cashfree sheet came back to "Payment is still being confirmed
+  // by the bank... do not pay again", with Pay Now disabled. They had not paid,
+  // no money was moving, nothing would ever arrive to confirm, and the cart was
+  // unusable until the intent aged out. Reproduced from the customer app.
+  //
+  // order_status cannot tell them apart; per-attempt payment_status can.
+  const attempts = await listPayments(merchantOrderId);
+
   if (success) {
-    try {
-      const { data: payments } = await axios.get(
-        `${api}/orders/${encodeURIComponent(merchantOrderId)}/payments`,
-        { headers: headers(), timeout: 15000, validateStatus: softStatus }
-      );
-      const paid = Array.isArray(payments)
-        ? payments.find((p) => p?.payment_status === "SUCCESS")
-        : null;
-      if (paid) {
-        providerTxnId = String(paid.cf_payment_id ?? "") || null;
-        instrument = paid.payment_group || null;
-        message = paid.payment_message || state;
-      }
-    } catch (err) {
-      console.log("MFB ~ cashfree ~ payments lookup ~", err.message);
+    const paid = attempts.find((p) => p?.payment_status === "SUCCESS");
+    if (paid) {
+      providerTxnId = String(paid.cf_payment_id ?? "") || null;
+      instrument = paid.payment_group || null;
+      message = paid.payment_message || state;
     }
+  }
+
+  const pending = success ? false : isStillInFlight(state, attempts, data, noAttemptGraceMs);
+  if (!success && !pending && state === "ACTIVE") {
+    // Say why, so the customer is told "that didn't go through, try again"
+    // rather than being left to guess.
+    const dropped = attempts.find((p) => ATTEMPT_DEAD.has(p?.payment_status));
+    message = dropped?.payment_message || (realAttempts(attempts).length === 0
+      ? "Payment was not completed"
+      : "Payment attempt did not succeed");
   }
 
   return {

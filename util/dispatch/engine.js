@@ -408,6 +408,46 @@ async function tick() {
   }
   if (unscheduled.length) actions.push(`scheduled ${unscheduled.length}`);
 
+  // 2b. Jobs still parked although their vendor has already accepted.
+  //
+  // A job is created when the order is placed and parked at 'waiting' with a
+  // NULL dispatch_at (deliveryDispatch.parkUntilAccepted), then started by
+  // scheduleForSourceOrder when the vendor accepts. Job creation runs as a
+  // best-effort side effect of placement, so it can still be in flight when the
+  // accept arrives — and then the accept finds no job to start, the job lands
+  // parked a moment later, and nothing ever starts it. The order sits with a
+  // vendor cooking and no rider being looked for, indefinitely.
+  //
+  // Nothing else recovers this: the orphan sweeper only looks for orders with
+  // NO job row at all (`NOT EXISTS`), and this one has a job. Reproduced by
+  // accepting an order immediately after placing it.
+  //
+  // Scoped to orders that really are accepted (status 1, Processed), so a job
+  // parked while the vendor is still deciding stays parked — which is the whole
+  // point of parking it.
+  const stranded = await sequelize.query(
+    `SELECT d.\`do_id\`, d.\`ready_in_min\`
+       FROM \`store_delivery_orders\` d
+       JOIN \`store_orders\` o ON o.\`order_id\` = d.\`source_order_id\`
+      WHERE d.\`status\` = 'offered' AND d.\`dp_id\` IS NULL
+        AND d.\`dispatch_state\` = 'waiting' AND d.\`dispatch_at\` IS NULL
+        AND o.\`order_status\` = 1
+      LIMIT :batch`,
+    { replacements: { batch: BATCH }, type: QueryTypes.SELECT }
+  );
+  for (const job of stranded) {
+    // Clear the park first: scheduleJob only writes where dispatch_state IS
+    // NULL, the same handover scheduleForSourceOrder performs.
+    await sequelize
+      .query(
+        "UPDATE `store_delivery_orders` SET `dispatch_state` = NULL WHERE `do_id` = :doId",
+        { replacements: { doId: job.do_id }, type: QueryTypes.UPDATE }
+      )
+      .then(() => scheduleJob(job))
+      .catch((e) => console.log(`MFB ~ dispatch unpark #${job.do_id}:`, e.message));
+  }
+  if (stranded.length) actions.push(`unparked ${stranded.length}`);
+
   // 3. Jobs whose dispatch time has arrived and that have no live offer.
   const due = await DeliveryOrder.findAll({
     where: {
