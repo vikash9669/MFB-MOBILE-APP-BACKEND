@@ -71,15 +71,37 @@ exports.list = async (req, res) => {
     const where = { ...roleWhere };
     if (req.query.search) {
       const s = String(req.query.search).trim();
-      where[Op.and] = [
-        {
-          [Op.or]: [
-            { user_name: { [Op.like]: `%${s}%` } },
-            { user_phone: { [Op.like]: `%${s}%` } },
-            { user_email: { [Op.like]: `%${s}%` } },
-          ],
-        },
+      const matches = [
+        { user_name: { [Op.like]: `%${s}%` } },
+        { user_phone: { [Op.like]: `%${s}%` } },
+        { user_email: { [Op.like]: `%${s}%` } },
       ];
+
+      // A vendor's RESTAURANT name is not on store_users at all — it lives in
+      // store_users_business.business_name, while user_name holds the owner's
+      // own name. So searching the vendors list for "Chai Sutta Bar" matched
+      // nothing, even though that is the only name staff know the vendor by and
+      // the one the list displays.
+      //
+      // Resolved to user ids first rather than joined: the businesses are
+      // loaded further down, AFTER pagination, so filtering them there would
+      // only ever see the 25 rows already on the page.
+      if (group === "vendors") {
+        const businesses = await Business.findAll({
+          attributes: ["user_id"],
+          where: { business_name: { [Op.like]: `%${s}%` } },
+          // A term like "a" would otherwise pull every vendor id into an IN
+          // clause. Vendors number in the dozens today, but this list grows.
+          limit: 500,
+          raw: true,
+        });
+        const ids = [...new Set(businesses.map((b) => b.user_id))].filter(Boolean);
+        if (ids.length) {
+          matches.push({ user_id: { [Op.in]: ids } });
+        }
+      }
+
+      where[Op.and] = [{ [Op.or]: matches }];
     }
     if (req.query.status !== undefined && req.query.status !== "") {
       where.user_status = Number(req.query.status);
