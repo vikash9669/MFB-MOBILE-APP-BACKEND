@@ -142,7 +142,7 @@ sequelize
     // Closes online sessions that stopped reporting — a partner who loses data
     // or force-quits would otherwise stay online indefinitely.
     startSessionSweeper();
-    // Recovers payments that succeeded at PhonePe but whose confirm call never
+    // Recovers payments that succeeded at the gateway but whose confirm call never
     // arrived — without this the customer is charged and no order is created.
     startPaymentSweeper();
     // Re-alerts vendors who haven't accepted, then escalates to admin staff.

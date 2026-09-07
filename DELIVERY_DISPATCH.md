@@ -62,7 +62,7 @@ an EAS rebuild.
 
 `runPostOrderSideEffects` in [util/orders.js](util/orders.js) calls
 `queueDeliveryJob(order_id)`. Both checkout paths already funnel through it —
-COD in `controllers/order.js` and PhonePe in `controllers/payment.js` — so one
+COD in `controllers/order.js` and online payment in `controllers/payment.js` — so one
 hook covers both. The job is created at **order placement**, not when the
 restaurant marks the food ready, because placement is the only server-side hook
 that exists today; `order_status` transitions happen in the PHP admin panel,
@@ -89,7 +89,7 @@ If you later want riders offered only once a vendor accepts, move the
 6. **OTPs.** Fresh six-digit pickup and drop codes per job.
 
 Creation is **idempotent** on `source_order_id`, which matters because the
-PhonePe callback can be re-entered on retries.
+gateway callback can be re-entered on retries.
 
 ### Matching — [controllers/deliveryOrders.js](controllers/deliveryOrders.js)
 

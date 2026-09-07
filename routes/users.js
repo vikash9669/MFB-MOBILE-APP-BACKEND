@@ -32,7 +32,9 @@ router.get("/orders/:id/route", verifyToken, orderController.getOrderRoute);
 router.get("/orders/:orderId/rate", verifyToken, riderRating.get);
 router.post("/orders/:orderId/rate", verifyToken, riderRating.rate);
 
-// ── Online payment (PhonePe) ────────────────────────────────────────
+// ── Online payment ──────────────────────────────────────────────────
+// Provider is chosen in util/gateway.js (PAYMENT_PROVIDER; cashfree in
+// production), never here — these routes are the same for every gateway.
 // initiate → app runs the SDK → confirm. The order row is created inside
 // confirm (or the callback), never before the money is verified.
 router.post("/payment/initiate", verifyToken, paymentInitiate, paymentController.initiatePayment);

@@ -1,8 +1,9 @@
 const { DataTypes } = require("sequelize");
 const sequelize = require("../util/database");
 
-// Holds a checkout while the customer is away in the PhonePe app. The
-// store_orders row is only written once PhonePe confirms the payment, which is
+// Holds a checkout while the customer is away in the payment gateway's app
+// or hosted page. The store_orders row is only written once the gateway
+// confirms the payment, which is
 // how the legacy PHP storefront behaved — restaurants never see an unpaid
 // order. An abandoned payment just leaves a stale intent here.
 const PaymentIntent = sequelize.define(
@@ -14,7 +15,8 @@ const PaymentIntent = sequelize.define(
       allowNull: false,
       primaryKey: true,
     },
-    // What we hand to PhonePe as merchantTransactionId. Also what comes back
+    // What we hand the gateway as its merchant order/transaction id. Also
+    // what comes back
     // on the callback, so it is the lookup key for the whole flow.
     merchant_txn_id: {
       type: DataTypes.STRING(64),
@@ -45,8 +47,8 @@ const PaymentIntent = sequelize.define(
       type: DataTypes.TEXT("long"),
       allowNull: false,
     },
-    // UPI | CARD — what the customer picked in the app. PhonePe reports the
-    // instrument actually used; this is only the requested preference.
+    // UPI | CARD — what the customer picked in the app. The gateway reports
+    // the instrument actually used; this is only the requested preference.
     method: {
       type: DataTypes.STRING(16),
       allowNull: false,

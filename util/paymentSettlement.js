@@ -1,9 +1,9 @@
-// Turning a verified-paid PhonePe intent into a real order.
+// Turning a verified-paid gateway intent into a real order.
 //
 // Three separate things can discover that a payment succeeded, in any order:
 //
 //   1. the app's own /user/payment/confirm call
-//   2. PhonePe's server-to-server webhook
+//   2. the gateway's server-to-server webhook
 //   3. the reconciliation sweeper (util/paymentSweeper.js)
 //
 // All three funnel through here so there is exactly one code path that creates
@@ -131,7 +131,7 @@ async function settleIntent(intent, providerTxnId, collectedAmount = null) {
       payment: PAYMENT_COLUMNS.paid({
         providerTxnId: providerTxnId || fresh.merchant_txn_id,
         // Charge what was quoted at initiate time, so a price change mid-payment
-        // can never bill the customer more than PhonePe collected.
+        // can never bill the customer more than the gateway collected.
         amountInRupees: fresh.amount,
       }),
     });

@@ -53,10 +53,16 @@ function integrations() {
         : `SMTP ${process.env.EMAIL_HOST || "?"}:${process.env.EMAIL_PORT || 587} as ${process.env.EMAIL_FROM || process.env.EMAIL_USER || "?"}`,
     ],
     ["Push (FCM)", set(process.env.FCM_PROJECT_ID) && set(process.env.FCM_PRIVATE_KEY), process.env.FCM_PROJECT_ID || ""],
+    // Asks the gateway module rather than naming a provider. This row used to
+    // be hardcoded to PhonePe — it checked PHONEPE_CLIENT_ID and printed
+    // "PhonePe <PHONEPE_ENV or UAT>" whatever PAYMENT_PROVIDER said. A
+    // deployment correctly switched to Cashfree PROD therefore reported
+    // "PhonePe UAT" at boot, which is the one line an operator checks to
+    // confirm the switch worked.
     [
       "Payments",
-      set(process.env.PHONEPE_CLIENT_ID) && set(process.env.PHONEPE_CLIENT_SECRET),
-      `PhonePe ${process.env.PHONEPE_ENV || "UAT"}`,
+      gateway.isConfigured(),
+      `${gateway.name} ${gateway.config().env}`,
     ],
     ["Maps", set(process.env.GOOGLE_MAPS_API_KEY), "Google"],
   ];
@@ -80,8 +86,15 @@ function warnings() {
   if (devNums.length) {
     w.push(`OTP_DEV_NUMBERS — ${devNums.length} number(s) skip OTP entirely and accept OTP_DEV_CODE.`);
   }
-  if ((process.env.PHONEPE_ENV || "UAT").toUpperCase() !== "PROD") {
-    w.push("PHONEPE_ENV is not PROD — payments use test money.");
+  // Keyed on the ACTIVE gateway, not on PhonePe. The old test read PHONEPE_ENV
+  // unconditionally, so a deployment running Cashfree in PROD was warned that
+  // its payments were test money, while one running Cashfree in sandbox with
+  // PHONEPE_ENV=PROD was told nothing at all — the warning was backwards in
+  // both directions.
+  if (String(gateway.config().env || "UAT").toUpperCase() !== "PROD") {
+    w.push(
+      `${gateway.name.toUpperCase()} is not in PROD — payments use test money.`
+    );
   }
   // The gateway webhook is what turns a PENDING intent into a PAID order
   // without the customer having to stay on the confirm screen. Its URL is built

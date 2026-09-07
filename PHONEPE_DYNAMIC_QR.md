@@ -1,8 +1,26 @@
 # Doorstep payments: real UPI QR vs. hosted checkout
 
-When a COD customer wants to pay online at the door, the rider shows a QR. What
-that QR *contains* decides whether the customer pays in two taps or goes on a
-detour through a web page.
+> **Status: production runs Cashfree** (`PAYMENT_PROVIDER=cashfree`).
+>
+> Most of this document describes PhonePe, which is no longer the active
+> gateway. It is kept because the *problem* it works through — what a QR must
+> contain for a customer to pay in two taps — is provider-independent, and
+> because PhonePe remains a supported rollback (`PAYMENT_PROVIDER=phonepe`).
+>
+> What changes under Cashfree:
+>
+> * There is **one** integration, not two. `util/cashfree.js` does checkout and
+>   doorstep QR from a single account and credential pair, so the split
+>   described below does not apply.
+> * Doorstep QR needs the **server-to-server endpoint**, which is gated behind
+>   the S2S flag on the merchant account and is *not* granted by default. Until
+>   Cashfree enables it, keep `CASHFREE_S2S_ENABLED=false`; doorstep falls back
+>   to hosted checkout rather than failing.
+> * `util/phonepeDqr.js` is dormant while the provider is cashfree. The
+>   doorstep entry point is `gateway.createUpiQr()` either way — see
+>   `util/gateway.js`, which is the only place a provider is chosen.
+>
+> Read the rest as PhonePe-specific background.
 
 ## Why there are two PhonePe integrations
 

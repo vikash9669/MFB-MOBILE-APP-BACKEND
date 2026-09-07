@@ -1,11 +1,11 @@
 // Reconciles payments the app never came back to confirm.
 //
 // The happy path is: customer pays, the app calls /user/payment/confirm, the
-// backend verifies with PhonePe and creates the order. Two things break it, and
-// both are ordinary rather than exotic:
+// backend verifies with the gateway and creates the order. Two things break it,
+// and both are ordinary rather than exotic:
 //
 //   * the app is killed, backgrounded to death, or loses data at the exact
-//     moment it returns from the PhonePe screen — so confirm never fires;
+//     moment it returns from the gateway's screen — so confirm never fires;
 //   * the server-to-server webhook can't reach us — which is the *permanent*
 //     state in any environment whose callback URL isn't publicly routable.
 //
@@ -13,10 +13,15 @@
 // charged and no order exists, and nothing in the system is looking. That is
 // the worst failure this codebase can produce, and it is silent.
 //
-// So we ask PhonePe ourselves. PhonePe's status API is the same authority the
-// confirm path already trusts, and settlement goes through the same
-// settleIntent as everything else, so a sweep that races a late confirm still
-// produces exactly one order.
+// So we ask the gateway ourselves, through util/gateway.js rather than any one
+// provider — this sweeper is why a provider switch must never be a code change
+// here. Its status API is the same authority the confirm path already trusts,
+// and settlement goes through the same settleIntent as everything else, so a
+// sweep that races a late confirm still produces exactly one order.
+//
+// Provider-neutral on purpose. Production runs Cashfree today and this file
+// names no provider, so a switch back to PhonePe — or on to a third — needs no
+// edit here.
 const { Op, QueryTypes } = require("sequelize");
 const sequelize = require("./database");
 const { refundsReady } = require("./lifecycleColumns");
@@ -31,9 +36,9 @@ const {
 } = require("./codCollection");
 
 // Don't race the app's own confirm — it usually lands within seconds. Sweeping
-// too eagerly just doubles the calls to PhonePe for no benefit.
+// too eagerly just doubles the calls to the gateway for no benefit.
 const AFTER_MIN = Number(process.env.PAYMENT_RECONCILE_AFTER_MIN || 2);
-// Past this we stop polling. PhonePe resolves orders long before a day is out,
+// Past this we stop polling. Gateways resolve orders long before a day is out,
 // so anything still PENDING here needs a human, not another status call.
 const MAX_AGE_HOURS = Number(process.env.PAYMENT_RECONCILE_MAX_AGE_HOURS || 24);
 // Cap the work per tick so a backlog can't turn into a burst of API calls.
@@ -71,7 +76,7 @@ async function sweepOnce() {
 
   // Doorstep collections reconcile separately, because they settle an order
   // that already exists rather than creating one. Without this a customer who
-  // paid by QR and immediately lost signal leaves the money at PhonePe and the
+  // paid by QR and immediately lost signal leaves the money at the gateway and the
   // order still marked cash — the rider having already left.
   try {
     const collections = await pendingCollections(BATCH);
@@ -115,7 +120,7 @@ async function sweepOnce() {
         });
         failed.push(`${intent.merchant_txn_id} (${status.state})`);
       }
-      // Still pending at PhonePe's end — leave it and look again next tick.
+      // Still pending at the gateway's end — leave it and look again next tick.
     } catch (err) {
       // A single bad intent must not abort the pass.
       console.log(

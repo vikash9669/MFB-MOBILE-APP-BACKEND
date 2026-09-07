@@ -22,6 +22,16 @@
 //
 // PAYMENT_PROVIDER selects. Unset means phonepe, so an existing deployment that
 // has never heard of this variable keeps the behaviour it already had.
+//
+// PRODUCTION RUNS CASHFREE (PAYMENT_PROVIDER=cashfree). Worth stating because
+// the fallback below points the other way: reading this file alone suggests
+// PhonePe is the live gateway, and it is not. PhonePe is kept working as a
+// rollback, not as the default in practice.
+//
+// The boot banner is the authority on what a given process actually resolved —
+// util/startupReport.js prints `payments <provider> <env>` from this module
+// rather than from any one provider's variables. Do not infer the active
+// gateway from PHONEPE_* or CASHFREE_* being present; both are.
 const phonepe = require("./phonepe");
 const dqr = require("./phonepeDqr");
 const cashfree = require("./cashfree");
