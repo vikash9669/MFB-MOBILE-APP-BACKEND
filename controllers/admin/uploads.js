@@ -9,29 +9,35 @@
 // apps' ASSETS_BASE_URL) is the filesystem under the PHP app's public assets:
 //
 //   MFB_PHP_ADMIN_PANEL/admin/assets/uploads/<kind>/webp/<name>.webp
-//                                            /<kind>/jpg/<name>.jpg
 //
 // with the filename (no extension) stored in the DB — store_products.product_image
 // and store_products_images.image_name. Those directories are already served by
 // the PHP host on :8091 and by www.myfirstbite.in in production, so writing here
 // keeps every existing image URL working.
+//
+// WebP only, despite a jpg/ directory existing beside it. This was checked
+// against the live host: legacy images resolve as .webp and the matching .jpg
+// is a 404, so the PHP panel converted on upload and wrote one file. Every
+// reader builds <kind>/webp/<name>.webp with no fallback, which is why
+// util/imageConvert.js converts rather than storing the original format.
 const { Product, User } = require("../../models");
 // Where the bytes go. The backend and the PHP host do not share a filesystem
 // once deployed, which is exactly the case this used to get silently wrong —
 // see util/uploadStore.js.
 const uploadStore = require("../../util/uploadStore");
+// Every upload becomes WebP before it is stored — see util/imageConvert.js.
+const imageConvert = require("../../util/imageConvert");
 
 // The kinds the PHP app uses; anything else is rejected so a request can't
 // write outside these directories.
 const KINDS = ["products", "menu", "users", "vendors", "banners", "cuisiness", "promos"];
 
 const MAX_BYTES = 4 * 1024 * 1024;
-const MIME_EXT = {
-  "image/jpeg": "jpg",
-  "image/jpg": "jpg",
-  "image/png": "jpg",
-  "image/webp": "webp",
-};
+
+// Everything is stored as WebP, whatever was uploaded — see util/imageConvert.js.
+// This used to pick the directory from the source mime, which sent every JPEG
+// and PNG to <kind>/jpg/<name>.jpg, a location no consumer has ever read from.
+const STORED_EXT = "webp";
 
 /** Strips anything that could escape the upload directory. */
 const safeName = (name) =>
@@ -57,20 +63,31 @@ exports.upload = async (req, res) => {
     if (!match) {
       return res.status(400).json({ message: "Image must be a base64 data URI" });
     }
-    const ext = MIME_EXT[match[1].toLowerCase()];
-    if (!ext) {
+    const mime = match[1].toLowerCase();
+    if (!imageConvert.isAccepted(mime)) {
       return res.status(415).json({ message: "Only JPEG, PNG or WebP images are accepted" });
     }
 
-    const buffer = Buffer.from(match[2], "base64");
-    if (buffer.length > MAX_BYTES) {
+    const source = Buffer.from(match[2], "base64");
+    // Checked against the UPLOAD, not the converted result: the limit exists to
+    // bound what a caller may send, and WebP is usually smaller anyway.
+    if (source.length > MAX_BYTES) {
       return res.status(413).json({ message: "Image must be 4 MB or smaller" });
     }
 
+    // Always WebP, whatever arrived. Readers build <kind>/webp/<name>.webp and
+    // have no fallback, so anything else is stored where nothing can find it.
+    const buffer = await imageConvert.toWebp(source, mime);
+
     // Stored without an extension in the DB, exactly as the PHP app does — the
-    // consumer appends /webp/<name>.webp or /jpg/<name>.jpg.
+    // consumer appends /webp/<name>.webp.
     const base = `${safeName(filename)}_${Date.now().toString().slice(-6)}`;
-    const { path: relative } = await uploadStore.putImage({ kind, ext, base, buffer });
+    const { path: relative } = await uploadStore.putImage({
+      kind,
+      ext: STORED_EXT,
+      base,
+      buffer,
+    });
 
     res.status(201).json({
       message: "Image uploaded",
@@ -80,6 +97,12 @@ exports.upload = async (req, res) => {
       path: relative,
     });
   } catch (err) {
+    // Not an image we can read, or conversion is unavailable. Either way the
+    // caller should be told plainly rather than shown "Upload failed".
+    if (err.unprocessable) {
+      console.log("MFB-error-logs ~ upload ~ unprocessable:", err.message);
+      return res.status(422).json({ message: err.message });
+    }
     // A 201 for a file that went nowhere is what made the original bug
     // invisible: the panel showed success and the image was already lost. Say
     // plainly that storage is unavailable so the caller can keep the artwork
