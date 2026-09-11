@@ -25,10 +25,10 @@ const {
 const ONLINE_METHODS = ["ONLINE", "UPI", "CARD"];
 
 
-// Cashfree requires a customer id and a 10-digit phone on every order;
-// PhonePe wants neither. Looked up once here and passed to whichever driver is
-// active, which ignores what it does not need. Never allowed to fail a
-// checkout — the drivers substitute a placeholder if this comes back empty.
+// Cashfree requires a customer id and a 10-digit phone on every order. Looked
+// up once here and passed to the active driver, which ignores what it does not
+// need. Never allowed to fail a checkout — the driver substitutes a placeholder
+// if this comes back empty.
 const customerFor = async (user_id) => {
   try {
     const u = await User.findByPk(user_id, {
@@ -47,12 +47,12 @@ const customerFor = async (user_id) => {
 };
 
 const newMerchantTxnId = (user_id) =>
-  // Bounded to PhonePe's 38-char limit for merchantTransactionId.
+  // Bounded to 38 chars, the tightest merchant-order-id limit we have had to meet.
   `MFB${Date.now()}${user_id}${crypto.randomBytes(3).toString("hex")}`.slice(0, 38);
 
 // POST /user/payment/initiate
 // Prices the cart, parks it as a PENDING intent, and returns the signed payload
-// the app hands to the PhonePe SDK. No store_orders row exists yet.
+// the app hands to the gateway SDK. No store_orders row exists yet.
 const initiatePayment = async (req, res) => {
   const { user_id } = req.user;
   const {
@@ -94,9 +94,9 @@ const initiatePayment = async (req, res) => {
 
     const merchantTransactionId = newMerchantTxnId(user_id);
 
-    // The web storefront and the mobile apps need different things from
-    // PhonePe: a browser gets a full-page redirect to hosted checkout, an app
-    // gets an SDK token. Same intent, same verification, different handoff.
+    // The web storefront and the mobile apps need different things from the
+    // gateway: a browser gets a full-page redirect to hosted checkout, an app
+    // gets an SDK session. Same intent, same verification, different handoff.
     const isWeb = String(req.body.flow || platform || "").toLowerCase() === "web";
 
     await PaymentIntent.create({
@@ -138,7 +138,7 @@ const initiatePayment = async (req, res) => {
     });
 
     if (isWeb) {
-      // Where PhonePe sends the customer's browser once they are done.
+      // Where the gateway sends the customer's browser once they are done.
       //
       // Taken from the origin this request came from, checked against the CORS
       // allowlist — the customer is demonstrably already there, so it cannot be
@@ -168,9 +168,9 @@ const initiatePayment = async (req, res) => {
       return res.status(201).json({
         merchant_txn_id: merchantTransactionId,
         amount: pricing.payable,
-        // The two providers hand a browser off differently, and the storefront
-        // branches on `provider` rather than guessing: PhonePe issues a URL to
-        // navigate to, Cashfree issues a session its JS SDK consumes in place.
+        // The storefront branches on `provider` rather than guessing. There is
+        // one gateway now, but it is still named: the storefront refuses a
+        // provider it cannot drive rather than attempting the handoff blind.
         provider: gateway.name,
         redirect_url: hosted.redirectUrl ?? null,
         payment_session_id: hosted.sessionId ?? null,
@@ -192,10 +192,9 @@ const initiatePayment = async (req, res) => {
     res.status(201).json({
       merchant_txn_id: merchantTransactionId,
       amount: pricing.payable,
-      // Everything below is fed straight into the SDK by the app. Which fields
-      // matter depends on the provider, so all of them are sent and the app
-      // picks by `provider`: PhonePe needs order_id + token + merchant_id,
-      // Cashfree needs order_id + payment_session_id.
+      // Everything below is fed straight into the SDK by the app. Cashfree
+      // needs order_id + payment_session_id; token is carried for older app
+      // builds that still read it and is harmless to send.
       provider: gateway.name,
       order_id: orderId,
       token,
@@ -222,7 +221,7 @@ const initiatePayment = async (req, res) => {
 
 // POST /user/payment/confirm  { merchant_txn_id }
 // Called by the app when the SDK returns. The SDK's own result is treated as a
-// hint only — PhonePe's status API is the authority.
+// hint only — the gateway's status API is the authority.
 const confirmPayment = async (req, res) => {
   const { user_id } = req.user;
   const { merchant_txn_id } = req.body || {};
@@ -323,8 +322,8 @@ const confirmPayment = async (req, res) => {
   }
 };
 
-// POST /payment/callback  (also /payment/phonepe/callback)
-// PhonePe's server-to-server notification. There is no JWT here — trust comes
+// POST /payment/callback
+// The gateway's server-to-server notification. There is no JWT here — trust comes
 // from the dashboard-configured Authorization credential (v2 webhook auth).
 const paymentCallback = async (req, res) => {
   try {
@@ -375,7 +374,7 @@ const paymentCallback = async (req, res) => {
       where: { merchant_txn_id: merchantOrderId },
     });
 
-    // Always 200 on an authenticated callback so PhonePe stops retrying.
+    // Always 200 on an authenticated callback so the gateway stops retrying.
     if (intent == null) return res.status(200).json({ ok: true });
 
     // Re-verify against the status API rather than trusting the webhook body,
@@ -398,16 +397,13 @@ const paymentCallback = async (req, res) => {
   }
 };
 
-// POST /payment/qr-callback  (also /payment/phonepe/qr-callback)
+// POST /payment/qr-callback
 //
-// The offline Dynamic QR product's server-to-server notification. It is a
-// separate endpoint from phonepeCallback because the two products authenticate
-// differently: PG v2 sends a dashboard-configured Authorization header, while
-// DQR sends X-VERIFY, a SHA256 over the base64 body and the salt key. Trying to
-// serve both from one handler would mean accepting either signature on either
-// product, which is a downgrade for both.
-//
-// Body is { response: "<base64 json>" }.
+// The doorstep-QR settlement notification. Cashfree sends QR money through the
+// ordinary payment webhook, so this points at the same verification — but it
+// stays a separate endpoint because the two carry different consequences: a QR
+// settlement closes a rider's cash collection, and a caller that wants only
+// one should not have to filter the other out.
 const qrCallback = async (req, res) => {
   try {
     if (!gateway.verifyQrCallback(req)) {
@@ -429,7 +425,7 @@ const qrCallback = async (req, res) => {
     if (collection == null) return res.status(200).json({ ok: true });
 
     // Re-verify with the status API rather than trusting the body. The
-    // signature proves the message came from PhonePe, not that it is current —
+    // signature proves the message came from the gateway, not that it is current —
     // a replayed callback must not settle anything on its own say-so.
     const status = await statusFor(collection);
     if (status.success && collection.status !== "PAID") {
@@ -444,7 +440,7 @@ const qrCallback = async (req, res) => {
     res.status(200).json({ ok: true });
   } catch (error) {
     console.error("MFB-error-logs ~ qrCallback:", error.message);
-    // 200 regardless, so PhonePe stops retrying a message we have accepted.
+    // 200 regardless, so the gateway stops retrying a message we have accepted.
     res.status(200).json({ ok: true });
   }
 };

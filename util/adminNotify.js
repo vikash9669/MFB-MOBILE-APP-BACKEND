@@ -359,7 +359,7 @@ async function notifyAdminsNoRider({ orderId, doId, pickup, dropArea, minutesWai
 async function notifyAdminsOrderCancelled({ orderId, shop, refunded, amount }) {
   try {
     let money = "Cash order — nothing to refund.";
-    if (refunded === true) money = `₹${amount} refund submitted to PhonePe.`;
+    if (refunded === true) money = `₹${amount} refund submitted to the payment gateway.`;
     else if (refunded === false) money = `₹${amount} was paid online and the REFUND FAILED — refund it by hand.`;
 
     const title = `Order #${orderId} auto-cancelled`;

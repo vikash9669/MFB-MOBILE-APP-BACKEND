@@ -27,9 +27,13 @@ const gateway = require("../util/gateway");
 
 // ── selection ──────────────────────────────────────────────────────────────
 
-test("an unset PAYMENT_PROVIDER keeps the behaviour a deployment already had", () => {
+test("an unset PAYMENT_PROVIDER resolves to cashfree, not to nothing", () => {
+  // This default used to be phonepe. A deploy that lost the variable then chose
+  // a gateway no app could drive, and every online payment failed with "this
+  // app version cannot pay with phonepe". Cashfree is the only driver now, so
+  // the absent-variable case must land on it.
   withEnv({ PAYMENT_PROVIDER: undefined }, () => {
-    assert.equal(gateway.name, "phonepe");
+    assert.equal(gateway.name, "cashfree");
   });
 });
 
@@ -41,18 +45,26 @@ test("PAYMENT_PROVIDER selects, and is case and whitespace tolerant", () => {
   }
 });
 
-test("a misspelt provider falls back to phonepe rather than crashing at checkout", () => {
+test("a misspelt provider falls back to cashfree rather than crashing at checkout", () => {
   withEnv({ PAYMENT_PROVIDER: "cashfreee" }, () => {
-    assert.equal(gateway.name, "phonepe");
+    assert.equal(gateway.name, "cashfree");
     assert.doesNotThrow(() => gateway.isConfigured());
   });
 });
 
-test("selection is re-read per call, so a switch takes effect without a restart", () => {
+test("a provider that no longer exists resolves to cashfree", () => {
+  // Someone's Render env may still say phonepe. That must serve payments, not
+  // fail them.
   withEnv({ PAYMENT_PROVIDER: "phonepe" }, () => {
-    assert.equal(gateway.name, "phonepe");
+    assert.equal(gateway.name, "cashfree");
   });
+});
+
+test("selection is re-read per call, so a switch takes effect without a restart", () => {
   withEnv({ PAYMENT_PROVIDER: "cashfree" }, () => {
+    assert.equal(gateway.name, "cashfree");
+  });
+  withEnv({ PAYMENT_PROVIDER: undefined }, () => {
     assert.equal(gateway.name, "cashfree");
   });
 });
@@ -97,12 +109,13 @@ test("the module re-exports every interface method as a plain function", () => {
 });
 
 // ── refund vocabulary ──────────────────────────────────────────────────────
-// PhonePe says COMPLETED, Cashfree says SUCCESS. Both mean the money moved, and
-// string-matching one of them in a caller is how refunded_at stops being
-// stamped after a provider switch.
+// Cashfree says SUCCESS. COMPLETED is still accepted: store_orders.refund_status
+// holds it on rows refunded while PhonePe was live, and accepting a word no
+// live path returns costs nothing next to the risk of refunded_at quietly
+// going unstamped.
 
-test("both providers' terminal refund words are recognised", () => {
-  assert.equal(gateway.isRefundSettled("COMPLETED"), true, "phonepe");
+test("a settled refund is recognised, including the historical word", () => {
+  assert.equal(gateway.isRefundSettled("COMPLETED"), true, "historical rows");
   assert.equal(gateway.isRefundSettled("SUCCESS"), true, "cashfree");
   assert.equal(gateway.isRefundSettled("success"), true, "case insensitive");
 });
@@ -150,58 +163,17 @@ test("credentials alone are not enough for cashfree doorstep QR", () => {
   );
 });
 
-test("phonepe doorstep QR still depends on its own separate DQR credentials", () => {
-  withEnv(
-    {
-      PAYMENT_PROVIDER: "phonepe",
-      PHONEPE_CLIENT_ID: "id",
-      PHONEPE_CLIENT_SECRET: "secret",
-      PHONEPE_DQR_SALT_KEY: undefined,
-      PHONEPE_DQR_STORE_ID: undefined,
-    },
-    () => {
-      assert.equal(gateway.isConfigured(), true, "checkout works");
-      assert.equal(gateway.qrConfigured(), false, "offline product is a separate onboarding");
-    }
-  );
-});
-
-// ── phonepe callback parsing, via the adapter ──────────────────────────────
-
-test("the phonepe adapter accepts every spelling the v2 webhook has used", () => {
-  withEnv({ PAYMENT_PROVIDER: "phonepe" }, () => {
-    const shapes = [
-      { payload: { merchantOrderId: "MFB1", state: "COMPLETED" } },
-      { payload: { merchantTransactionId: "MFB1", state: "COMPLETED" } },
-      { data: { merchantOrderId: "MFB1", status: "COMPLETED" } },
-      { merchantOrderId: "MFB1", state: "COMPLETED" },
-      { merchantTransactionId: "MFB1", state: "COMPLETED" },
-    ];
-    for (const body of shapes) {
-      const parsed = gateway.parseCallback({ body });
-      assert.equal(parsed?.merchantOrderId, "MFB1", JSON.stringify(body));
-    }
-  });
-});
-
-test("an unparseable phonepe body returns null rather than throwing", () => {
-  withEnv({ PAYMENT_PROVIDER: "phonepe" }, () => {
-    assert.equal(gateway.parseCallback({ body: { nothing: true } }), null);
-    assert.equal(gateway.parseCallback({}), null);
-  });
-});
-
 // ── config reporting ───────────────────────────────────────────────────────
 
-test("config() reports env and sdk for both providers", () => {
+test("config() reports env and sdk", () => {
   withEnv({ PAYMENT_PROVIDER: "cashfree", CASHFREE_ENV: "PROD" }, () => {
     const c = gateway.config();
     assert.equal(c.env, "PROD");
     assert.equal(c.sdk, "PRODUCTION");
   });
-  withEnv({ PAYMENT_PROVIDER: "phonepe", PHONEPE_ENV: "UAT" }, () => {
+  withEnv({ PAYMENT_PROVIDER: "cashfree", CASHFREE_ENV: undefined }, () => {
     const c = gateway.config();
-    assert.equal(c.env, "UAT");
+    assert.equal(c.env, "UAT", "an unset CASHFREE_ENV must not imply production");
     assert.equal(c.sdk, "SANDBOX");
   });
 });

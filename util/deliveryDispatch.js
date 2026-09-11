@@ -4,7 +4,7 @@
 // were completely disconnected, so every delivery job in the system came from
 // the demo seeder and a real rider would never see a real order. createJobForOrder
 // runs from the post-order side effects, which both checkout paths go through
-// (COD in controllers/order.js, PhonePe in controllers/payment.js).
+// (COD in controllers/order.js, online in controllers/payment.js).
 //
 // Nothing here may fail an order that is already committed and possibly already
 // paid for. Every path is caught and logged; a job that can't be built just
@@ -160,7 +160,7 @@ const locate = async (pickup, drop) => {
 
 // Creates the delivery job for a customer order, or returns null when there's
 // nothing to create. Idempotent: a second call for the same order is a no-op,
-// which matters because the PhonePe path can be re-entered on callback retries.
+// which matters because the online path can be re-entered on callback retries.
 async function createJobForOrder(orderId) {
   const existing = await DeliveryOrder.findOne({
     where: { source_order_id: orderId },

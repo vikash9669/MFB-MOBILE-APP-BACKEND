@@ -332,7 +332,7 @@ async function alertAdminAutoCancelled({ orderId, shop, refunded, amount, orderU
 
   let money = "This was a cash order, so there is nothing to refund.";
   if (refunded === true) {
-    money = `₹${amount} refund submitted to PhonePe.`;
+    money = `₹${amount} refund submitted to the payment gateway.`;
   } else if (refunded === false) {
     money = `⚠️ ₹${amount} was paid online and the REFUND DID NOT GO THROUGH. Refund it by hand.`;
   }

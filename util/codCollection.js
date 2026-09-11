@@ -6,7 +6,7 @@
 // THREE RULES SHAPE THIS FILE, and all three are about money rather than UX:
 //
 //  1. THE RIDER CANNOT DECLARE THE PAYMENT DONE. Nothing here trusts the app.
-//     Only PhonePe's status API — reached from the poll, the webhook, or the
+//     Only the gateway's status API — reached from the poll, the webhook, or the
 //     reconciliation sweeper — can mark an order paid. A "mark as paid" button
 //     is a rider marking it paid, keeping the cash, and the loss surfacing days
 //     later during float reconciliation.
@@ -33,8 +33,8 @@ const { notifyPartner } = require("./deliveryNotify");
 
 const PURPOSE = "cod_collection";
 
-// PhonePe expires its own checkout; keep ours a little shorter so a rider is
-// never staring at a QR the gateway has already abandoned.
+// The gateway expires its own checkout; keep ours a little shorter so a rider
+// is never staring at a QR the gateway has already abandoned.
 // Whether a collect payload is a real UPI intent or merely a link to a web
 // checkout. The string itself is the authority: providers differ, and the
 // same provider differs between sandbox and production.
@@ -129,8 +129,8 @@ async function startCollection({ doId, dpId }) {
   //
   // Whether that is available depends on the provider and on what the merchant
   // account has been granted, which is why it is asked of the gateway rather
-  // than decided here. On PhonePe it needs the separate offline Dynamic QR
-  // product; on Cashfree it needs the S2S flag. Neither is guaranteed.
+  // than decided here. On Cashfree it needs the S2S flag on the merchant
+  // account, which is not granted by default.
   //
   // Falls back to an ordinary checkout link, which encodes into a QR that opens
   // a web page. Clumsier, but a doorstep is the wrong place to fail outright.
@@ -179,7 +179,7 @@ async function startCollection({ doId, dpId }) {
       // than a bare localhost literal.
       redirectUrl: `${origins.webBase(null)}/payment/return?txn=${encodeURIComponent(merchantTxnId)}`,
     });
-    // PhonePe returns a URL to navigate to. Cashfree returns a session id, and
+    // Cashfree returns a session id rather than a URL to navigate to, and
     // the customer-facing page that consumes it lives on the storefront, so the
     // QR encodes that page rather than an API response.
     payload =
@@ -237,7 +237,7 @@ async function startCollection({ doId, dpId }) {
 /**
  * Flips a COD order to paid-online. Idempotent.
  *
- * Called from the rider's poll, the PhonePe webhook and the reconciliation
+ * Called from the rider's poll, the gateway webhook and the reconciliation
  * sweeper — whichever notices first wins, and the rest are no-ops.
  */
 async function settleCollection(intent) {
@@ -298,7 +298,7 @@ async function settleCollection(intent) {
 }
 
 /**
- * Asks PhonePe where a collection stands, settling it if it has completed.
+ * Asks the gateway where a collection stands, settling it if it has completed.
  *
  * This is what the rider's screen polls. The app never decides — it only
  * reports what this returns.
@@ -306,7 +306,7 @@ async function settleCollection(intent) {
 /** A payment payload is a UPI QR if it is a upi:// deep link; anything else is a URL. */
 
 /**
- * Asks the right PhonePe product whether an intent has been paid.
+ * Asks the gateway whether an intent has been paid.
  *
  * The two products keep separate ledgers: a transaction raised through offline
  * Dynamic QR is invisible to the PG status API and vice versa, so asking the
@@ -429,13 +429,13 @@ async function loadCollectionIntent(merchantTxnId) {
  * Collection intents still PENDING that the sweeper should re-check.
  *
  * A customer can pay and immediately lose signal, or the rider can close the
- * screen mid-payment — without this the money sits at PhonePe and the order
+ * screen mid-payment — without this the money sits at the gateway and the order
  * stays marked cash.
  */
 async function pendingCollections(limit = 20) {
   if (!(await collectionReady())) return [];
   return sequelize.query(
-    // collect_url comes along because statusFor needs it to pick which PhonePe
+    // collect_url comes along because statusFor needs it to pick which gateway
     // product to ask.
     // expires_in_sec so statusFor knows how much of the collection window is
     // left — computed in SQL for the reason given there.

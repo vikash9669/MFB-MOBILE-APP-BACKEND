@@ -5,109 +5,21 @@
 // never to a provider directly. Adding a third provider is one new driver plus
 // one line in DRIVERS; it is not a change to any caller.
 //
-// PhonePe is presented through an adapter rather than being rewritten. Its two
-// files are the ones that have actually taken money and carry the bug fixes
-// that came with doing so, so they are left exactly as they are and the shape
-// differences are absorbed here:
+// This used to carry a second driver. PhonePe — ordinary checkout plus its
+// separate doorstep-QR product — has been removed from the backend and from all
+// three frontends, so Cashfree is the only gateway. The indirection is kept:
+// it is what made removing a provider a change to this file alone rather than
+// to controllers/payment.js, util/codCollection.js, util/paymentSweeper.js and
+// util/orderLifecycle.js, and it is what would make adding one cheap again.
 //
-//   * PhonePe splits ordinary checkout (util/phonepe.js, OAuth) from doorstep
-//     QR (util/phonepeDqr.js, X-VERIFY salt checksums) across two products with
-//     two credential sets. Cashfree does both from one account.
-//   * PhonePe's refund status needs only the refund id; Cashfree scopes refunds
-//     under the order and needs both. The interface passes an object, so the
-//     caller supplies both and each driver takes what it needs.
-//   * Webhook authenticity is a header credential (PhonePe PG), a base64 body
-//     checksum (PhonePe DQR), or an HMAC over the raw bytes (Cashfree). Each
-//     driver is handed the whole request and decides for itself.
-//
-// PAYMENT_PROVIDER selects. Unset means phonepe, so an existing deployment that
-// has never heard of this variable keeps the behaviour it already had.
-//
-// PRODUCTION RUNS CASHFREE (PAYMENT_PROVIDER=cashfree). Worth stating because
-// the fallback below points the other way: reading this file alone suggests
-// PhonePe is the live gateway, and it is not. PhonePe is kept working as a
-// rollback, not as the default in practice.
+// PAYMENT_PROVIDER still selects, and now DEFAULTS TO CASHFREE. It used to
+// default to phonepe, which meant an unset variable silently chose a gateway
+// nothing could drive. Anything other than "cashfree" now resolves to Cashfree
+// anyway rather than to a missing driver.
 //
 // The boot banner is the authority on what a given process actually resolved —
-// util/startupReport.js prints `payments <provider> <env>` from this module
-// rather than from any one provider's variables. Do not infer the active
-// gateway from PHONEPE_* or CASHFREE_* being present; both are.
-const phonepe = require("./phonepe");
-const dqr = require("./phonepeDqr");
+// util/startupReport.js prints `payments <provider> <env>` from this module.
 const cashfree = require("./cashfree");
-
-/** The PhonePe pair, wearing the shared interface. */
-const phonepeDriver = {
-  name: "phonepe",
-  isConfigured: () => phonepe.isConfigured(),
-  config: () => {
-    const c = phonepe.config();
-    return { env: c.env, sdk: c.sdk, merchantId: c.merchantId };
-  },
-
-  createSdkOrder: async (args) => {
-    const r = await phonepe.createSdkOrder(args);
-    // No session id in this protocol; the SDK takes a per-order token.
-    return { orderId: r.orderId, token: r.token, sessionId: null, expireAt: r.expireAt };
-  },
-
-  createHostedCheckout: async (args) => {
-    const r = await phonepe.createHostedCheckout(args);
-    return { orderId: r.orderId, redirectUrl: r.redirectUrl, sessionId: null, expireAt: r.expireAt };
-  },
-
-  qrConfigured: () => dqr.isConfigured(),
-  createUpiQr: async ({ merchantOrderId, amountInRupees, expiresInSec, sourceOrderId }) => {
-    if (!dqr.isConfigured()) return null;
-    const qr = await dqr.createQr({
-      merchantTxnId: merchantOrderId,
-      amountInRupees,
-      ...(expiresInSec ? { expiresInSec } : {}),
-      // DQR carries our store order id as its own reference field, which is
-      // separate from the transaction id.
-      merchantOrderId: sourceOrderId,
-    });
-    return qr?.qrString
-      ? { qrString: qr.qrString, qrImageBase64: null, providerRef: null, channel: "dqr" }
-      : null;
-  },
-
-  // PhonePe has no per-attempt list and so no no-attempt window; the options
-  // argument is accepted and ignored so callers need not branch on provider.
-  fetchStatus: (merchantOrderId) => phonepe.fetchStatus(merchantOrderId),
-  qrFetchStatus: (merchantOrderId) => dqr.fetchQrStatus(merchantOrderId),
-
-  refundPayment: (args) => phonepe.refundPayment(args),
-  fetchRefundStatus: ({ merchantRefundId }) => phonepe.fetchRefundStatus(merchantRefundId),
-
-  verifyCallbackAuth: (req) => phonepe.verifyCallbackAuth(req?.headers?.authorization),
-
-  // v2 nominally sends { payload: { merchantOrderId, state } }, but the id has
-  // turned up as merchantTransactionId and at the top level depending on the
-  // event, and an unrecognised shape used to throw on every callback. Accept
-  // the known spellings and return null for anything else.
-  parseCallback: (req) => {
-    const body = req?.body || {};
-    const payload = body.payload || body.data || {};
-    const merchantOrderId =
-      payload.merchantOrderId ||
-      payload.merchantTransactionId ||
-      body.merchantOrderId ||
-      body.merchantTransactionId ||
-      null;
-    const state = payload.state || payload.status || body.state || null;
-    return merchantOrderId ? { merchantOrderId, state } : null;
-  },
-
-  // The offline QR product signs differently, so it keeps its own pair.
-  verifyQrCallback: (req) =>
-    dqr.verifyCallback(req?.body?.response || req?.body?.request, req?.headers?.["x-verify"]),
-  parseQrCallback: (req) => {
-    const decoded = dqr.decodeCallback(req?.body?.response || req?.body?.request);
-    const id = decoded?.data?.transactionId || decoded?.data?.merchantTransactionId || null;
-    return id ? { merchantOrderId: id, state: decoded?.data?.state ?? null } : null;
-  },
-};
 
 /** Cashfree already speaks the interface; only the QR gate is added here. */
 const cashfreeDriver = {
@@ -124,7 +36,7 @@ const cashfreeDriver = {
   // One account, one credential set — but /orders/sessions is gated behind the
   // S2S flag, which is granted separately. CASHFREE_S2S_ENABLED=true is the
   // switch to flip once Cashfree confirms it, and until then the doorstep flow
-  // falls back to a checkout link exactly as it does on PhonePe today.
+  // falls back to a checkout link, which still collects the money.
   qrConfigured: () =>
     cashfree.isConfigured() &&
     String(process.env.CASHFREE_S2S_ENABLED || "").toLowerCase() === "true",
@@ -150,14 +62,14 @@ const cashfreeDriver = {
   parseQrCallback: (req) => cashfree.parseCallback(req),
 };
 
-const DRIVERS = { phonepe: phonepeDriver, cashfree: cashfreeDriver };
+const DRIVERS = { cashfree: cashfreeDriver };
 
 const selected = () =>
-  String(process.env.PAYMENT_PROVIDER || "phonepe").trim().toLowerCase();
+  String(process.env.PAYMENT_PROVIDER || "cashfree").trim().toLowerCase();
 
 /** The active driver. Read per call so tests can switch provider in-process. */
 function driver() {
-  return DRIVERS[selected()] || phonepeDriver;
+  return DRIVERS[selected()] || cashfreeDriver;
 }
 
 // Re-exported as plain functions so callers read `gateway.fetchStatus(id)`
@@ -182,9 +94,11 @@ for (const method of [
   proxy[method] = (...args) => driver()[method](...args);
 }
 
-// PhonePe says COMPLETED, Cashfree says SUCCESS, and both mean the money has
-// actually left. Callers should ask this rather than string-matching, or a
-// provider switch silently stops stamping refunded_at.
+// Cashfree says SUCCESS. COMPLETED is kept because store_orders.refund_status
+// still holds it on rows refunded while PhonePe was the gateway, and because a
+// value that no live path returns costs nothing while removing one could stop
+// refunded_at being stamped. Callers should ask this rather than
+// string-matching a provider's vocabulary.
 const isRefundSettled = (state) =>
   ["COMPLETED", "SUCCESS"].includes(String(state || "").toUpperCase());
 

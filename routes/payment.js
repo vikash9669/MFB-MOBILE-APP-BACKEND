@@ -3,23 +3,22 @@ const paymentController = require("../controllers/payment");
 
 const router = express.Router();
 
-// The provider's server-to-server callback. Deliberately unauthenticated —
-// no gateway carries our JWT. Trust comes from the signature, which the active
-// driver checks in its own scheme: a dashboard credential (PhonePe PG), an
-// X-VERIFY body checksum (PhonePe DQR), or an HMAC over the raw bytes
-// (Cashfree). See util/gateway.js.
+// The gateway's server-to-server callback. Deliberately unauthenticated — no
+// gateway carries our JWT. Trust comes from the signature: Cashfree sends an
+// HMAC over the raw bytes, which the driver verifies. See util/gateway.js.
 //
-// Provider-neutral paths are the ones to configure from now on. The /phonepe/*
-// spellings are kept because they are already registered in the PhonePe
-// dashboard, and a webhook URL that quietly 404s is the worst kind of outage:
-// the customer is charged and no order is ever created.
+// These paths used to have /phonepe/* aliases alongside them, kept because that
+// spelling was registered in the PhonePe dashboard. PhonePe has been removed,
+// and nothing posts there any more — the backend names the callback itself on
+// every order it creates (notifyUrl in controllers/payment.js), so the URL a
+// gateway uses comes from us rather than from a dashboard field somebody set
+// once.
 router.post("/callback", paymentController.paymentCallback);
-router.post("/phonepe/callback", paymentController.paymentCallback);
 
-// Doorstep QR settlements. Separate endpoint because PhonePe signs this
-// product differently from its own checkout; on Cashfree both point at the
-// same verification, since one webhook covers every payment.
+// Doorstep QR settlements. Kept as its own endpoint even though Cashfree sends
+// QR money through the ordinary payment webhook, because the two carry
+// different consequences — a QR settlement closes a rider's cash collection —
+// and a caller that wants only one should not have to filter the other out.
 router.post("/qr-callback", paymentController.qrCallback);
-router.post("/phonepe/qr-callback", paymentController.qrCallback);
 
 module.exports = router;

@@ -54,12 +54,10 @@ function integrations() {
         : `SMTP ${process.env.EMAIL_HOST || "?"}:${process.env.EMAIL_PORT || 587} as ${process.env.EMAIL_FROM || process.env.EMAIL_USER || "?"}`,
     ],
     ["Push (FCM)", set(process.env.FCM_PROJECT_ID) && set(process.env.FCM_PRIVATE_KEY), process.env.FCM_PROJECT_ID || ""],
-    // Asks the gateway module rather than naming a provider. This row used to
-    // be hardcoded to PhonePe — it checked PHONEPE_CLIENT_ID and printed
-    // "PhonePe <PHONEPE_ENV or UAT>" whatever PAYMENT_PROVIDER said. A
-    // deployment correctly switched to Cashfree PROD therefore reported
-    // "PhonePe UAT" at boot, which is the one line an operator checks to
-    // confirm the switch worked.
+    // Asks the gateway module rather than naming a provider. This row was once
+    // hardcoded to one provider's variables and kept printing that provider's
+    // name and environment whatever PAYMENT_PROVIDER said — so the one line an
+    // operator checks to confirm a switch worked was the line that lied.
     [
       "Payments",
       gateway.isConfigured(),
@@ -87,11 +85,10 @@ function warnings() {
   if (devNums.length) {
     w.push(`OTP_DEV_NUMBERS — ${devNums.length} number(s) skip OTP entirely and accept OTP_DEV_CODE.`);
   }
-  // Keyed on the ACTIVE gateway, not on PhonePe. The old test read PHONEPE_ENV
-  // unconditionally, so a deployment running Cashfree in PROD was warned that
-  // its payments were test money, while one running Cashfree in sandbox with
-  // PHONEPE_ENV=PROD was told nothing at all — the warning was backwards in
-  // both directions.
+  // Keyed on the ACTIVE gateway. This once read a single provider's *_ENV
+  // unconditionally, so a deployment live in PROD was warned its payments were
+  // test money while a sandbox one was told nothing — backwards in both
+  // directions.
   if (String(gateway.config().env || "UAT").toUpperCase() !== "PROD") {
     w.push(
       `${gateway.name.toUpperCase()} is not in PROD — payments use test money.`

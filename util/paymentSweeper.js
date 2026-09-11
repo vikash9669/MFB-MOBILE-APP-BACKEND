@@ -20,7 +20,7 @@
 // sweep that races a late confirm still produces exactly one order.
 //
 // Provider-neutral on purpose. Production runs Cashfree today and this file
-// names no provider, so a switch back to PhonePe — or on to a third — needs no
+// names no provider, so adding a second gateway later would need no
 // edit here.
 const { Op, QueryTypes } = require("sequelize");
 const sequelize = require("./database");

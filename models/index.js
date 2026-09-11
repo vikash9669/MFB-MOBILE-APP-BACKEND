@@ -154,7 +154,7 @@ UserDevice.belongsTo(User, { foreignKey: "user_id", targetKey: "user_id" });
 User.hasMany(UserNotification, { foreignKey: "user_id", sourceKey: "user_id", as: "notifications" });
 UserNotification.belongsTo(User, { foreignKey: "user_id", targetKey: "user_id" });
 
-// ── Payment intents (checkout parked while the customer is in PhonePe) ──
+// ── Payment intents (checkout parked while the customer is at the gateway) ──
 User.hasMany(PaymentIntent, { foreignKey: "customer_id", sourceKey: "user_id", as: "payment_intents" });
 PaymentIntent.belongsTo(User, { foreignKey: "customer_id", targetKey: "user_id" });
 

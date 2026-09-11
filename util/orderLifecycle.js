@@ -10,7 +10,7 @@
 //
 // The refund is idempotent on merchantRefundId, which is derived from the
 // payment intent's primary key rather than generated randomly. A retry after a
-// network timeout therefore reuses the same id, and PhonePe treats it as the
+// network timeout therefore reuses the same id, and the gateway treats it as the
 // same refund instead of a second one. That id is claimed with a conditional
 // UPDATE against a UNIQUE index before the API call, so two processes cannot
 // both decide they are the one refunding.
@@ -370,7 +370,7 @@ async function refundOrderPayment(order, reason) {
     return { accepted: result.accepted, state: result.state, refundId: result.refundId };
   } catch (err) {
     // The claim stays in place on purpose: the id is now reserved, so the
-    // retry path reuses it and PhonePe deduplicates. Clearing it would be the
+    // retry path reuses it and the gateway deduplicates. Clearing it would be the
     // bug that pays twice.
     await sequelize
       .query(

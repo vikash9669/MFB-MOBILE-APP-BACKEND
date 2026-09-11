@@ -15,7 +15,7 @@ const orderCustomerNotify = require("./orderCustomerNotify");
 const { queueDeliveryJob } = require("./deliveryDispatch");
 
 // Shared order pipeline for both the COD path (controllers/order.js) and the
-// PhonePe path (controllers/payment.js). Pricing is computed here, server-side,
+// online path (controllers/payment.js). Pricing is computed here, server-side,
 // from product ids only — the client never sends prices.
 
 // Prices a cart. Returns every figure store_orders needs, so the caller only
@@ -144,7 +144,7 @@ const priceCart = async ({
   // discount was set in the panel. With that column at 0 this line is unchanged.
   const order_amount = orderAmount + rainCharges;
 
-  // What the customer actually pays, and so what we charge via PhonePe. This
+  // What the customer actually pays, and so what we charge via the gateway. This
   // matches the total the cart screen renders.
   const payable = order_amount + delivery_charges - order_discount;
 
@@ -379,7 +379,7 @@ const runPostOrderSideEffectsInBackground = async ({
 
   // Put the order into the rider pool. queueDeliveryJob swallows its own
   // errors — a delivery job that can't be built must never fail an order that
-  // is already committed and, on the PhonePe path, already paid for.
+  // is already committed and, on the online path, already paid for.
   await queueDeliveryJob(order_id);
 };
 

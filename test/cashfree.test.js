@@ -2,8 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const crypto = require("node:crypto");
 
-// Unit tests for the Cashfree driver and the gateway that selects between it
-// and PhonePe.
+// Unit tests for the Cashfree driver and the gateway that resolves it.
 //
 // No network. What is exercised here is the set of mistakes that actually cost
 // money at this layer: sending paise where rupees are expected, accepting a
@@ -68,9 +67,10 @@ test.beforeEach(() => {
 });
 
 // ── amounts ────────────────────────────────────────────────────────────────
-// PhonePe bills in paise and this file sits next to it. Copying that *100 here
-// would charge every customer a hundred times the order value, and nothing
-// downstream would notice — the intent, the order and the receipt all agree.
+// Cashfree bills in RUPEES. Other gateways in this market bill in paise, so a
+// *100 conversion copied in from one of them would charge every customer a
+// hundred times the order value — and nothing downstream would notice, because
+// the intent, the order and the receipt would all agree with each other.
 
 test("order amount is sent in RUPEES, not paise", async () => {
   await withEnv(CREDS, async () => {

@@ -487,7 +487,7 @@ exports.startCollect = async (req, res) => {
 
 // GET /delivery/orders/:id/collect
 // Where the collection stands. The app polls this; it never decides for itself
-// whether money arrived — only PhonePe's status API can say that.
+// whether money arrived — only the gateway's status API can say that.
 exports.collectStatus = async (req, res) => {
   try {
     const order = await DeliveryOrder.findByPk(req.params.id, { attributes: ["do_id", "dp_id"] });

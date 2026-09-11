@@ -3,29 +3,28 @@ const axios = require("axios");
 
 // Cashfree Payment Gateway client — API version 2026-01-01.
 //
-// Deliberately shaped to match util/phonepe.js function for function, because
-// util/gateway.js presents whichever of the two is configured behind one
-// interface and every caller is written against that interface, not against a
-// provider. Read the two files side by side; the differences below are real
-// protocol differences, not style.
+// Written against the interface util/gateway.js presents, not called directly:
+// every caller — controllers/payment.js, util/codCollection.js,
+// util/paymentSweeper.js, util/orderLifecycle.js — goes through the gateway
+// module. It is the only driver now, but the shape is what kept removing the
+// previous one a single-file change.
 //
 //   auth      Two headers on every request (x-client-id / x-client-secret).
-//             There is no OAuth dance and therefore no token cache — the whole
-//             getAccessToken / tokenCache apparatus in util/phonepe.js has no
-//             counterpart here.
+//             No OAuth dance, so no token cache to keep warm or invalidate.
 //
-//   amounts   RUPEES, with up to two decimals. PhonePe bills in paise, so the
-//             *100 conversion that file performs must NOT be copied here. This
-//             is the single easiest way to overcharge a customer by 100x.
+//   amounts   RUPEES, with up to two decimals — NOT paise. Gateways in this
+//             market differ on this and some bill in paise, so any *100
+//             conversion copied in from elsewhere overcharges by 100x. This is
+//             the single easiest way to take a hundred times a customer's
+//             money, and it looks correct in every log until they complain.
 //
-//   identity  Cashfree calls our id `order_id`; PhonePe calls it
-//             `merchantOrderId`. Both are the same value: our merchant_txn_id.
+//   identity  Cashfree calls our id `order_id`. It is our merchant_txn_id.
 //
 //   flow      Create Order returns a `payment_session_id`. The mobile SDK and
-//             the web JS SDK both consume that directly, so — unlike PhonePe —
-//             there is no separate "hosted checkout returns a redirect URL"
-//             call. createHostedCheckout below returns the session id and the
-//             browser hands it to Cashfree's JS SDK.
+//             the web JS SDK both consume that directly, so there is no
+//             separate "hosted checkout returns a redirect URL" call.
+//             createHostedCheckout below returns the session id and the browser
+//             hands it to Cashfree's JS SDK.
 //
 // Docs: https://www.cashfree.com/docs/api-reference/payments/latest/orders/create
 
@@ -37,8 +36,8 @@ const HOSTS = {
 };
 
 const config = () => {
-  // CASHFREE_ENV is read the same way PHONEPE_ENV is, so switching provider
-  // does not also change how you say "this is production".
+  // Spelled the same way every other *_ENV in this service is, so "this is
+  // production" reads identically wherever it appears.
   const env =
     (process.env.CASHFREE_ENV || "UAT").toUpperCase() === "PROD" ? "PROD" : "UAT";
   return {
@@ -146,13 +145,13 @@ const createOrder = async ({
   };
 };
 
-// The mobile apps' entry point. Same name as the PhonePe driver's so
+// The mobile apps' entry point. Named for the gateway interface so
 // util/gateway.js can hand either to the same controller.
 const createSdkOrder = async (args) => {
   const order = await createOrder(args);
   return {
     orderId: order.orderId,
-    // Cashfree's RN SDK takes a session id where PhonePe's takes a token.
+    // Cashfree's RN SDK takes a session id, not a token.
     // Reported under both names so a caller written for either works.
     token: order.sessionId,
     sessionId: order.sessionId,
@@ -163,7 +162,7 @@ const createSdkOrder = async (args) => {
 /**
  * The browser's entry point.
  *
- * Unlike PhonePe there is no server-issued redirect URL: Cashfree's web SDK
+ * There is no server-issued redirect URL: Cashfree's web SDK
  * takes the session id and performs the redirect itself. So this returns a
  * session rather than a location, and the storefront branches on `provider`.
  */
@@ -341,8 +340,8 @@ const fetchStatus = async (merchantOrderId, { noAttemptGraceMs } = {}) => {
 /**
  * A real UPI QR for taking a COD order's money at the door.
  *
- * This is the Cashfree counterpart to util/phonepeDqr.js, and the reason that
- * file exists: PhonePe's PG product can only produce a hosted-checkout URL,
+ * This is the doorstep-QR path, and the reason that
+ * file exists: an ordinary checkout call can only produce a hosted-checkout URL,
  * which encodes into a QR that opens a web page rather than a UPI app. Here the
  * `podQrCode` channel — Cashfree's own name for pay-on-delivery — returns a
  * scannable QR, and `qrcode` is tried as a fallback for accounts where the POD
@@ -351,7 +350,7 @@ const fetchStatus = async (merchantOrderId, { noAttemptGraceMs } = {}) => {
  * IMPORTANT: /orders/sessions is Cashfree's server-to-server endpoint and is
  * gated behind the S2S flag on the merchant account. Without it every call
  * here fails, so this returns null and the caller falls back to the ordinary
- * checkout link — exactly the way the PhonePe DQR path degrades today.
+ * checkout link, which still collects the money.
  */
 const createUpiQr = async ({ merchantOrderId, amountInRupees, userId, customer, notifyUrl }) => {
   const { api } = config();
@@ -436,12 +435,12 @@ const createUpiQr = async ({ merchantOrderId, amountInRupees, userId, customer, 
 /**
  * Refunds a completed payment, in full or in part.
  *
- * merchantRefundId is our idempotency key, exactly as with PhonePe: Cashfree
+ * merchantRefundId is our idempotency key: Cashfree
  * treats a repeat of the same refund_id against the same order as the same
  * refund. Callers must persist the id BEFORE calling and reuse it on retry —
  * see util/orderLifecycle.js, which claims it with a unique index.
  *
- * Cashfree scopes refunds under the order, so unlike PhonePe this needs the
+ * Cashfree scopes refunds under the order, so this needs the
  * original order id as well as the refund id.
  */
 const refundPayment = async ({ merchantRefundId, originalMerchantOrderId, amountInRupees }) => {
@@ -459,7 +458,7 @@ const refundPayment = async ({ merchantRefundId, originalMerchantOrderId, amount
   );
 
   const state = data?.refund_status || (status >= 400 ? "FAILED" : "UNKNOWN");
-  // PENDING means accepted and on its way, not settled — same as PhonePe.
+  // PENDING means accepted and on its way, not settled.
   const accepted = state === "SUCCESS" || state === "PENDING" || state === "ONHOLD";
 
   return {

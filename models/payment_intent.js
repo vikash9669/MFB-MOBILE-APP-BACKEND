@@ -65,7 +65,7 @@ const PaymentIntent = sequelize.define(
       allowNull: false,
       defaultValue: "PENDING",
     },
-    // Set once PhonePe returns a transaction id.
+    // Set once the gateway returns a transaction id.
     provider_txn_id: {
       type: DataTypes.STRING(255),
       allowNull: true,

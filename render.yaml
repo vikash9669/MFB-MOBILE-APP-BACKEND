@@ -51,10 +51,6 @@ services:
       - { key: FCM_PROJECT_ID,         sync: false }
       - { key: FCM_CLIENT_EMAIL,       sync: false }
       - { key: FCM_PRIVATE_KEY,        sync: false }
-      - { key: PHONEPE_CLIENT_ID,      sync: false }
-      - { key: PHONEPE_CLIENT_SECRET,  sync: false }
-      - { key: PHONEPE_MERCHANT_ID,    sync: false }
-      - { key: PHONEPE_ENV,            sync: false }
 
       # ── behaviour, safe to keep in the blueprint ──────────────────
       # Render blocks outbound SMTP (25/465/587) on the free plan, and the
