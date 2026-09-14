@@ -22,6 +22,7 @@ const { addressAttributes } = require("../../util/addressColumns");
 const { notifyOrderReceived } = require("./notify");
 const { RIDER_ROLE, VENDOR_ROLE } = require("../../middlewares/verifyAdmin");
 const { assignToPanelRider } = require("../../util/riderAssignment");
+const { FINISHED_STATUSES, activeFirstWindow } = require("../../util/activeFirstPage");
 
 const num = (v) => Number(v || 0);
 const label = (s) => STATUS_LABELS[Number(s)] || "Unknown";
@@ -199,19 +200,47 @@ const serialize = (o) => ({
 });
 
 // GET /admin/orders?page=&limit=&status=&from=&to=&search=
+//
+// Active orders first, newest first; then Delivered and Cancelled, newest
+// first. See util/activeFirstPage.js for why that is two queries, not one sort.
 exports.list = async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
     const where = buildWhere(req.query);
 
-    const { count, rows } = await StoreOrders.findAndCountAll({
+    // Both totals in one pass. The active count is what lets each half of the
+    // page be fetched with an exact LIMIT/OFFSET.
+    const [counts] = await StoreOrders.findAll({
       where,
-      order: [["order_id", "DESC"]],
-      limit,
-      offset: (page - 1) * limit,
+      attributes: [
+        [fn("COUNT", col("order_id")), "total"],
+        [fn("SUM", literal(`\`order_status\` IN (${FINISHED_STATUSES.join(", ")})`)), "finished"],
+      ],
       raw: true,
     });
+    const count = Number(counts?.total || 0);
+    const activeCount = count - Number(counts?.finished || 0);
+
+    const w = activeFirstWindow({ page, limit, activeCount });
+    // Spread rather than wrapped in Op.and, so a status filter already in
+    // `where` still applies: filtering to "Delivered" makes the active half
+    // (status = 5 AND status NOT IN (5, 6)) correctly empty.
+    const half = (statusClause, take, skip) =>
+      take > 0
+        ? StoreOrders.findAll({
+            where: { ...where, [Op.and]: [{ order_status: statusClause }] },
+            order: [["order_id", "DESC"]],
+            limit: take,
+            offset: skip,
+            raw: true,
+          })
+        : [];
+    const [active, finished] = await Promise.all([
+      half({ [Op.notIn]: FINISHED_STATUSES }, w.activeTake, w.activeOffset),
+      half({ [Op.in]: FINISHED_STATUSES }, w.finishedTake, w.finishedOffset),
+    ]);
+    const rows = [...active, ...finished];
 
     const decorated = await withPeople(rows);
     res.json({
