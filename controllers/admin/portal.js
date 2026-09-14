@@ -70,12 +70,33 @@ function scopeWhere(panel) {
   return {};
 }
 
+/**
+ * Whether this viewer may see how to reach the customer.
+ *
+ * A rider needs the phone number and the address — they are the one taking the
+ * food to the door. A vendor needs neither: the kitchen cooks against an order
+ * number and hands the bag to the rider, and anything that goes wrong with the
+ * customer is ours to handle, not the restaurant's. So a vendor is shown the
+ * customer's name and nothing else that identifies or locates them — no phone,
+ * no address or landmark, no payment reference.
+ *
+ * This is enforced here, in what the API sends, and not only by hiding it on
+ * screen: the vendor's browser can read every field of every response, so a
+ * field the screen merely leaves out is still handed to them.
+ */
+const seesCustomerContact = (panel) => panel?.portal !== "vendor";
+
 // Decorates orders with the names each portal shows.
-async function decorate(rows) {
+async function decorate(rows, panel) {
   const ids = [
     ...new Set(rows.flatMap((o) => [o.customer_id, o.vendor_id, o.rider_id]).filter(Boolean)),
   ];
   if (ids.length === 0) return rows.map((o) => ({ ...o }));
+  // A vendor's addresses are never sent (see seesCustomerContact), so don't
+  // read them either.
+  const addressIds = seesCustomerContact(panel)
+    ? [...new Set(rows.map((o) => o.address_id).filter(Boolean))]
+    : [];
   const [people, businesses, addresses] = await Promise.all([
     User.findAll({
       where: { user_id: ids },
@@ -87,11 +108,13 @@ async function decorate(rows) {
       attributes: ["user_id", "business_name"],
       raw: true,
     }),
-    Address.findAll({
-      where: { delivery_id: [...new Set(rows.map((o) => o.address_id).filter(Boolean))] },
-      attributes: ["delivery_id", "delivery_address", "delivery_landmark", "delivery_phone"],
-      raw: true,
-    }),
+    addressIds.length
+      ? Address.findAll({
+          where: { delivery_id: addressIds },
+          attributes: ["delivery_id", "delivery_address", "delivery_landmark", "delivery_phone"],
+          raw: true,
+        })
+      : [],
   ]);
   const byId = Object.fromEntries(people.map((p) => [p.user_id, p]));
   const bizById = Object.fromEntries(businesses.map((b) => [b.user_id, b.business_name]));
@@ -108,7 +131,20 @@ async function decorate(rows) {
   }));
 }
 
-const serialize = (o) => ({
+/** One order as the signed-in viewer is allowed to see it. */
+const serialize = (o, panel) => {
+  const order = serializeFull(o);
+  if (!seesCustomerContact(panel)) {
+    // Removed rather than nulled, so a vendor response carries no trace of the
+    // fields at all.
+    delete order.customer_phone;
+    delete order.address;
+    delete order.transaction_id;
+  }
+  return order;
+};
+
+const serializeFull = (o) => ({
   order_id: o.order_id,
   customer_name: o.customer_name,
   customer_phone: o.customer_phone,
@@ -168,7 +204,7 @@ exports.dashboard = async (req, res) => {
       }),
     ]);
 
-    const decorated = await decorate(todayRows);
+    const decorated = await decorate(todayRows, req.panel);
     const t = totals[0] || {};
 
     res.json({
@@ -183,7 +219,7 @@ exports.dashboard = async (req, res) => {
         label: l,
         count: num(byStatus.find((s) => Number(s.order_status) === i)?.count),
       })),
-      orders: decorated.map(serialize),
+      orders: decorated.map((o) => serialize(o, req.panel)),
     });
   } catch (err) {
     console.log("MFB-error-logs ~ portal dashboard ~ err:", err);
@@ -231,7 +267,7 @@ exports.newOrders = async (req, res) => {
       raw: true,
     });
 
-    const decorated = await decorate(rows);
+    const decorated = await decorate(rows, req.panel);
 
     // Each order's position on the acceptance ladder (0/1/2). The vendor's
     // OrderBell re-rings when this climbs, which is how a still-pending order
@@ -240,7 +276,7 @@ exports.newOrders = async (req, res) => {
     const { stageOf } = require("../../util/orderAcceptSweeper");
 
     res.json({
-      orders: decorated.map((o) => ({ ...serialize(o), wait_stage: stageOf(o.order_id) })),
+      orders: decorated.map((o) => ({ ...serialize(o, req.panel), wait_stage: stageOf(o.order_id) })),
       latest_id: latestId,
       // How many arrived in total, which may exceed what we returned.
       total_new: await StoreOrders.count({
@@ -278,9 +314,9 @@ exports.orders = async (req, res) => {
       raw: true,
     });
 
-    const decorated = await decorate(rows);
+    const decorated = await decorate(rows, req.panel);
     res.json({
-      orders: decorated.map(serialize),
+      orders: decorated.map((o) => serialize(o, req.panel)),
       page,
       limit,
       total: count,
@@ -502,12 +538,12 @@ exports.pendingOrders = async (req, res) => {
       raw: true,
     });
 
-    const decorated = await decorate(rows);
+    const decorated = await decorate(rows, req.panel);
     const items = await itemCounts(rows.map((o) => o.order_id));
 
     res.json({
       orders: decorated.map((o) => ({
-        ...serialize(o),
+        ...serialize(o, req.panel),
         item_count: items.get(o.order_id) ?? 0,
       })),
       // The screen counts down locally; these tell it against what.
@@ -853,7 +889,7 @@ exports.orderDetail = async (req, res) => {
     if (order == null) {
       return res.status(404).json({ message: "Order not found" });
     }
-    const [decorated] = await decorate([order]);
+    const [decorated] = await decorate([order], req.panel);
     const items = await StoreOrderDetails.findAll({
       where: { order_id: order.order_id },
       raw: true,
@@ -868,7 +904,7 @@ exports.orderDetail = async (req, res) => {
     const nameById = Object.fromEntries(products.map((p) => [p.product_id, p.product_name]));
 
     res.json({
-      order: serialize(decorated),
+      order: serialize(decorated, req.panel),
       items: items.map((i) => ({
         order_detail_id: i.order_detail_id,
         product_name: nameById[i.product_id] || `#${i.product_id}`,
