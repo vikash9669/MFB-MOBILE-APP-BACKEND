@@ -100,7 +100,7 @@ async function decorate(rows, panel) {
   const [people, businesses, addresses] = await Promise.all([
     User.findAll({
       where: { user_id: ids },
-      attributes: ["user_id", "user_name", "user_phone"],
+      attributes: ["user_id", "user_name", "user_phone", "user_phone_1"],
       raw: true,
     }),
     Business.findAll({
@@ -125,6 +125,10 @@ async function decorate(rows, panel) {
     customer_name: byId[o.customer_id]?.user_name ?? null,
     customer_phone: byId[o.customer_id]?.user_phone ?? null,
     vendor_name: bizById[o.vendor_id] ?? byId[o.vendor_id]?.user_name ?? null,
+    // The store's own number, printed on the receipt under its name — the shop
+    // line (user_phone_1) as the PHP invoice used, else the account's. It is
+    // the vendor's contact, not the customer's, so every portal gets it.
+    vendor_phone: byId[o.vendor_id]?.user_phone_1 || byId[o.vendor_id]?.user_phone || null,
     rider_name: byId[o.rider_id]?.user_name ?? null,
     rider_phone: byId[o.rider_id]?.user_phone ?? null,
     address: addrById[o.address_id] ?? null,
@@ -150,6 +154,7 @@ const serializeFull = (o) => ({
   customer_phone: o.customer_phone,
   vendor_id: o.vendor_id,
   vendor_name: o.vendor_name,
+  vendor_phone: o.vendor_phone,
   rider_id: o.rider_id,
   rider_name: o.rider_name,
   rider_phone: o.rider_phone,

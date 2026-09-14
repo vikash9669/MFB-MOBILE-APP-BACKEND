@@ -154,7 +154,7 @@ const withPeople = async (rows) => {
   const [people, businesses] = await Promise.all([
     User.findAll({
       where: { user_id: ids },
-      attributes: ["user_id", "user_name", "user_phone"],
+      attributes: ["user_id", "user_name", "user_phone", "user_phone_1"],
       raw: true,
     }),
     Business.findAll({
@@ -170,6 +170,9 @@ const withPeople = async (rows) => {
     customer_name: byId[o.customer_id]?.user_name || null,
     customer_phone: byId[o.customer_id]?.user_phone || null,
     vendor_name: bizById[o.vendor_id] || byId[o.vendor_id]?.user_name || null,
+    // The store's number, as the PHP invoice printed it under the store's name
+    // (store_users.user_phone_1, the shop line), falling back to the account's.
+    vendor_phone: byId[o.vendor_id]?.user_phone_1 || byId[o.vendor_id]?.user_phone || null,
     rider_name: byId[o.rider_id]?.user_name || null,
   }));
 };
@@ -181,6 +184,7 @@ const serialize = (o) => ({
   customer_phone: o.customer_phone,
   vendor_id: o.vendor_id,
   vendor_name: o.vendor_name,
+  vendor_phone: o.vendor_phone,
   rider_id: o.rider_id,
   rider_name: o.rider_name,
   address_id: o.address_id,
