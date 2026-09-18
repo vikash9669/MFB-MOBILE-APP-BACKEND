@@ -15,6 +15,8 @@ const { startOrphanJobSweeper } = require("./util/orphanJobSweeper");
 const { startDispatchEngine } = require("./util/dispatch/engine");
 const { startPromoNotificationSweeper } = require("./util/promoNotificationSweeper");
 const { startRiderLocationSweeper } = require("./util/riderLocationSweeper");
+const { startOnlinePayJob } = require("./util/presence/onlinePay");
+const { attachPresenceSocket } = require("./util/presence/socket");
 const bannerRoutes = require("./routes/banner");
 const deliveryAuthRoutes = require("./routes/deliveryAuth");
 const deliveryAdminRoutes = require("./routes/deliveryAdmin");
@@ -176,12 +178,18 @@ sequelize
     // reporting a location — the case the app's own alert cannot cover,
     // because the app is no longer running. See util/riderLocationSweeper.js.
     startRiderLocationSweeper();
+    // Credits ₹/hour online pay for each ended IST day and marks shifts
+    // completed from measured online time. See RIDER_ONLINE_PAY.md.
+    startOnlinePayJob();
     // 8080 stays the default so nothing that hardcodes it breaks; PORT exists so
     // a second instance can be run alongside for testing.
     const port = Number(process.env.PORT) || 8080;
     // Log from the callback, not before it — "listening" printed ahead of the
     // bind is a lie if the port is already taken.
-    app.listen(port, () => reportListening(port));
+    const server = app.listen(port, () => reportListening(port));
+    // The rider app's presence channel (/delivery/presence/ws) rides the same
+    // HTTP server, so it needs no extra port and no extra config on the host.
+    attachPresenceSocket(server);
   })
   .catch((err) => {
     // Exit non-zero. Staying alive with no listener makes a host report a

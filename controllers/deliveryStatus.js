@@ -75,10 +75,25 @@ exports.getSummary = async (req, res) => {
 
     const stats = await todayStats(partner.dp_id);
 
-    // Active shift (if any) for the "You're online" banner.
-    const activeShift = await DeliveryShift.findOne({
-      where: { dp_id: partner.dp_id, status: "active" },
+    // Online pay accrued today (credited after midnight). Today's earnings are
+    // deliveries plus this — the rider is paid for both.
+    const { accruedToday } = require("../util/presence/onlinePay");
+    const onlinePay = await accruedToday(partner.dp_id).catch(() => null);
+    stats.delivery_earnings = stats.earnings;
+    stats.online_pay = onlinePay ? onlinePay.amount : 0;
+    stats.online_min = onlinePay ? onlinePay.online_min : 0;
+    stats.earnings = Math.round((stats.delivery_earnings + stats.online_pay) * 100) / 100;
+
+    // The shift running right now, if any, for the "You're online" banner —
+    // judged by the clock and measured online time, not a stored status that
+    // nothing used to update.
+    const { liveFor } = require("./deliveryShifts");
+    const { istDateOf } = require("../util/presence/config");
+    const todaysShifts = await DeliveryShift.findAll({
+      where: { dp_id: partner.dp_id, shift_date: istDateOf(Date.now()) },
     });
+    const liveShifts = await liveFor(todaysShifts);
+    const activeShift = todaysShifts.find((s) => liveShifts.get(s.shift_id)?.status === "active") ?? null;
 
     // Is there a job currently in progress (accepted / picked up)?
     const activeOrder = await DeliveryOrder.findOne({
@@ -106,7 +121,8 @@ exports.getSummary = async (req, res) => {
             id: activeShift.shift_id,
             start_time: activeShift.start_time,
             end_time: activeShift.end_time,
-            worked_min: num(activeShift.worked_min),
+            worked_min: liveShifts.get(activeShift.shift_id)?.worked_min ?? num(activeShift.worked_min),
+            offline_min: liveShifts.get(activeShift.shift_id)?.offline_min ?? 0,
             label: activeShift.label,
           }
         : null,

@@ -166,25 +166,37 @@ async function startCollection({ doId, dpId }) {
   }
 
   if (payload == null) {
+    const web = origins.webBase(null);
     const hosted = await gateway.createHostedCheckout({
       merchantOrderId: merchantTxnId,
       amountInRupees: amount,
       userId: job.dp_id,
       // Where the provider sends the CUSTOMER'S browser after paying. They are
-      // on their own phone, not the rider's, so this points at the storefront's
-      // return page rather than anything in the delivery app.
+      // on their own phone, not the rider's, and almost never signed in to the
+      // storefront — so this is the public /pay/done page, not /payment/return,
+      // which sits behind the storefront's login and would have bounced a
+      // customer who had just paid to a sign-in form. The rider's screen polls
+      // the gateway itself; this page only has to say "done".
       //
       // No browser request here to read an Origin from, so this one is
       // configuration-only — but it falls back to the CORS allowlist rather
       // than a bare localhost literal.
-      redirectUrl: `${origins.webBase(null)}/payment/return?txn=${encodeURIComponent(merchantTxnId)}`,
+      redirectUrl: `${web}/pay/done?txn=${encodeURIComponent(merchantTxnId)}`,
     });
-    // Cashfree returns a session id rather than a URL to navigate to, and
-    // the customer-facing page that consumes it lives on the storefront, so the
-    // QR encodes that page rather than an API response.
+    // Cashfree returns a session id rather than a URL to navigate to, so the
+    // QR encodes the storefront's /pay/:session page, which hands that session
+    // to Cashfree's own checkout.
+    //
+    // That page did not exist. Every doorstep QR that reached this fallback —
+    // which is every one on a Cashfree account without the S2S flag — opened
+    // the storefront's "Page not found", and the rider was left with a QR no
+    // customer could pay. The environment rides along because a session id
+    // alone does not say whether it belongs to Cashfree's sandbox or production
+    // checkout, and loading the wrong one rejects it.
+    const env = gateway.config().sdk === "PRODUCTION" ? "production" : "sandbox";
     payload =
       hosted.redirectUrl ??
-      `${origins.webBase(null)}/pay/${encodeURIComponent(hosted.sessionId ?? merchantTxnId)}`;
+      `${web}/pay/${encodeURIComponent(hosted.sessionId ?? merchantTxnId)}?env=${env}`;
   }
 
   const order = await StoreOrders.findByPk(job.source_order_id, { raw: true });

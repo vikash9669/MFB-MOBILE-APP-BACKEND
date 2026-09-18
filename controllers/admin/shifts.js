@@ -11,7 +11,7 @@
 // app where they are already exercised.
 const { Op } = require("sequelize");
 const { DeliveryShift, DeliveryPartner, User } = require("../../models");
-const { shiftOverview, serializeShift, shiftDetail } = require("../deliveryShifts");
+const { shiftOverview, serializeShift, shiftDetail, liveFor } = require("../deliveryShifts");
 const {
   activeTotals,
   sessionsForDay,
@@ -109,12 +109,15 @@ exports.list = async (req, res) => {
         })
       : [];
     const byId = new Map(partners.map((p) => [p.dp_id, p]));
+    // Whether each rider kept the hours they declared, measured from their
+    // actual online time (util/presence/shifts.js).
+    const live = await liveFor(shifts);
 
     res.json({
       shifts: shifts.map((s) => {
         const p = byId.get(s.dp_id);
         return {
-          ...serializeShift(s),
+          ...serializeShift(s, live.get(s.shift_id)),
           dp_id: s.dp_id,
           rider_name: p?.dp_name || "",
           rider_phone: p?.dp_phone || "",

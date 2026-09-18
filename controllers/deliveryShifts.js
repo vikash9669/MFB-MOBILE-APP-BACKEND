@@ -6,21 +6,44 @@ const {
   sessionsForDay,
   activeMinutes,
 } = require("../util/deliverySessions");
+const { liveCompletion } = require("../util/presence/shifts");
+const { accruedToday } = require("../util/presence/onlinePay");
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const serializeShift = (s) => ({
+/**
+ * One shift for the app and the panel.
+ *
+ * `live` is the result of util/presence/shifts.liveCompletion for this shift:
+ * status, worked and offline minutes measured from the rider's actual online
+ * time right now. Without it the stored columns are used, which the hourly job
+ * keeps current for ended shifts.
+ */
+const serializeShift = (s, live = null) => ({
   id: s.shift_id,
   date: s.shift_date,
   start_time: s.start_time,
   end_time: s.end_time,
   label: s.label,
-  status: s.status,
-  worked_min: num(s.worked_min),
+  status: live?.status ?? s.status,
+  scheduled_min: live?.scheduled_min ?? null,
+  worked_min: live ? live.worked_min : num(s.worked_min),
+  offline_min: live ? live.offline_min : null,
+  // full | partial | missed once the shift has ended; null before.
+  completion: live ? live.completion : null,
   break_left_min: num(s.break_left_min),
   login_bonus: num(s.login_bonus),
   incentive_bonus: num(s.incentive_bonus),
 });
+
+/** liveCompletion, degrading to "no live data" if presence is unavailable. */
+async function liveFor(rows) {
+  try {
+    return await liveCompletion(rows.map((r) => (typeof r.get === "function" ? r.get({ plain: true }) : r)));
+  } catch {
+    return new Map();
+  }
+}
 
 // GET /delivery/shifts — active shift, this-week strip, and upcoming shifts.
 // Also reports the partner's online flag: the Shifts screen's Pause/Resume
@@ -35,10 +58,6 @@ async function shiftOverview(dpId) {
   {
     const partner = await DeliveryPartner.findByPk(dpId, {
       attributes: ["dp_online"],
-    });
-
-    const active = await DeliveryShift.findOne({
-      where: { dp_id: dpId, status: "active" },
     });
 
     // Monday-to-Sunday window for the week strip.
@@ -59,7 +78,13 @@ async function shiftOverview(dpId) {
       },
     });
 
-    // One cell per weekday (Mon–Fri) with a booked/active marker.
+    // Live status for the week: a shift is active because the clock is inside
+    // its window, and completed with the time the rider was really online.
+    const weekLive = await liveFor(weekShifts);
+    const liveOf = (s) => weekLive.get(s.shift_id) ?? null;
+    const active = weekShifts.find((s) => liveOf(s)?.status === "active") ?? null;
+
+    // One cell per weekday (Mon–Fri) with a booked/active/completed marker.
     const week = [];
     for (let i = 0; i < 5; i += 1) {
       const d = new Date(monday);
@@ -67,14 +92,19 @@ async function shiftOverview(dpId) {
       const key = d.toISOString().slice(0, 10);
       const s = weekShifts.find((w) => String(w.shift_date) === key);
       let dot = null;
+      const live = s ? liveOf(s) : null;
       if (s) {
-        dot = s.status === "active" ? "primary" : "success";
+        if (live?.status === "active") dot = "primary";
+        else if (live?.completion === "missed") dot = "danger";
+        else if (live?.completion === "partial") dot = "warning";
+        else dot = "success";
       }
       week.push({
         d: DOW[d.getDay()],
         n: String(d.getDate()),
         date: key,
-        active: s ? s.status === "active" : false,
+        active: live?.status === "active",
+        completion: live?.completion ?? null,
         dot,
       });
     }
@@ -89,29 +119,36 @@ async function shiftOverview(dpId) {
       limit: 6,
     });
 
-    const booked = weekShifts.reduce((h, s) => h + num(s.worked_min), 0);
+    // Hours the rider DECLARED this week — worked_min was never filled in, so
+    // this always read 0. What they were actually online for is active_time.
+    const booked = weekShifts.reduce((h, s) => h + (liveOf(s)?.scheduled_min ?? 0), 0);
+    const upcomingLive = await liveFor(upcoming);
 
     // Measured online time, as distinct from the declared schedule above.
     const today = now.toISOString().slice(0, 10);
-    const [totals, sessions] = await Promise.all([
+    const [totals, sessions, onlinePay] = await Promise.all([
       activeTotals(dpId, now),
       sessionsForDay(dpId, today),
+      accruedToday(dpId).catch(() => null),
     ]);
 
     return {
       online: !!partner?.dp_online,
-      active: active ? serializeShift(active) : null,
+      active: active ? serializeShift(active, liveOf(active)) : null,
       week,
       week_booked_hours: Math.round(booked / 60),
-      upcoming: upcoming.map(serializeShift),
+      upcoming: upcoming.map((s) => serializeShift(s, upcomingLive.get(s.shift_id))),
       // Active time is what the partner was actually online for.
       active_time: totals,
       sessions_today: sessions,
+      // Today's online time and what it is worth so far; credited after midnight.
+      online_pay_today: onlinePay,
     };
   }
 }
 
 exports.shiftOverview = shiftOverview;
+exports.liveFor = liveFor;
 exports.serializeShift = serializeShift;
 
 exports.getShifts = async (req, res) => {
@@ -164,7 +201,8 @@ exports.create = async (req, res) => {
       label: label || null,
       status: "booked",
     });
-    res.status(201).json({ message: "Shift added", shift: serializeShift(shift) });
+    const live = await liveFor([shift]);
+    res.status(201).json({ message: "Shift added", shift: serializeShift(shift, live.get(shift.shift_id)) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery create shift ~ err:", err);
     res.status(500).json({ message: "Failed to add shift" });
@@ -203,20 +241,31 @@ exports.detail = async (req, res) => {
   }
 };
 
-/** A shift plus the online sessions that fell inside it. Shared with the panel. */
+/**
+ * A shift, how much of it the rider was online for, and the sessions (with
+ * their trails) that fell inside it. Shared with the panel.
+ *
+ * online_min comes from presence spans, so it follows the 5-minute gap rule and
+ * includes time synced late from the phone. The sessions are the online/offline
+ * toggles, kept for the map trail.
+ */
 async function shiftDetail(shift) {
   const day = String(shift.shift_date).slice(0, 10);
   const all = await sessionsForDay(shift.dp_id, day);
   const inShift = all.filter((s) => s.shift_id === shift.shift_id);
-  const online_min = inShift.reduce((t, s) => t + s.minutes, 0);
+  const live = (await liveFor([shift])).get(shift.shift_id) ?? null;
   const [sh, sm] = String(shift.start_time).slice(0, 5).split(":").map(Number);
   const [eh, em] = String(shift.end_time).slice(0, 5).split(":").map(Number);
-  const scheduled_min = Math.max(0, eh * 60 + em - (sh * 60 + sm));
+  const fallbackScheduled = Math.max(0, eh * 60 + em - (sh * 60 + sm));
+  const scheduled_min = live?.scheduled_min ?? fallbackScheduled;
+  const online_min = live ? live.worked_min : inShift.reduce((t, s) => t + s.minutes, 0);
   return {
-    shift: serializeShift(shift),
+    shift: serializeShift(shift, live),
     sessions: inShift,
     online_min,
+    offline_min: live ? live.offline_min : Math.max(0, scheduled_min - online_min),
     scheduled_min,
+    completion: live?.completion ?? null,
     // Share of the declared window actually spent online.
     coverage: scheduled_min ? Math.min(1, online_min / scheduled_min) : 0,
   };
@@ -238,7 +287,8 @@ exports.book = async (req, res) => {
       return res.status(409).json({ message: "Shift can't be booked" });
     }
     await shift.update({ status: "booked" });
-    res.json({ message: "Shift booked", shift: serializeShift(shift) });
+    const live = await liveFor([shift]);
+    res.json({ message: "Shift booked", shift: serializeShift(shift, live.get(shift.shift_id)) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery book shift ~ err:", err);
     res.status(500).json({ message: "Failed to book shift" });
@@ -260,7 +310,8 @@ exports.extend = async (req, res) => {
     const total = ((h * 60 + m + minutes) % (24 * 60) + 24 * 60) % (24 * 60);
     const end = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
     await shift.update({ end_time: end });
-    res.json({ message: `Shift extended by ${minutes} min`, shift: serializeShift(shift) });
+    const live = await liveFor([shift]);
+    res.json({ message: `Shift extended by ${minutes} min`, shift: serializeShift(shift, live.get(shift.shift_id)) });
   } catch (err) {
     console.log("MFB-error-logs ~ delivery extend shift ~ err:", err);
     res.status(500).json({ message: "Failed to extend shift" });

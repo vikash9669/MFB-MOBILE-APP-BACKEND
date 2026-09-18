@@ -1,6 +1,8 @@
 const { Op, fn, col } = require("sequelize");
 const { DeliveryOrder, DeliveryPartner } = require("../models");
 const { num } = require("../util/delivery");
+const { accruedToday, paidBetween } = require("../util/presence/onlinePay");
+const { istDateOf, istAddDays } = require("../util/presence/config");
 
 // Returns the [start, end) window and a matching set of chart buckets for a
 // requested period.
@@ -76,16 +78,31 @@ exports.getEarnings = async (req, res) => {
     const r = rows[0] || {};
     const partner = await DeliveryPartner.findByPk(dpId);
 
+    // Online pay for the same period: what has been credited for past days,
+    // plus today's accrued time (credited after midnight). ₹/hour online is
+    // part of what a rider earns, alongside deliveries — RIDER_ONLINE_PAY.md.
+    const today = istDateOf(Date.now());
+    const fromDate = istDateOf(start.getTime());
+    const yesterday = istAddDays(today, -1);
+    const [paid, accrued] = await Promise.all([
+      fromDate <= yesterday ? paidBetween(dpId, fromDate, yesterday).catch(() => null) : null,
+      accruedToday(dpId).catch(() => null),
+    ]);
+    const onlineTime = Math.round(((paid?.amount ?? 0) + (accrued?.amount ?? 0)) * 100) / 100;
+    const onlineMin = (paid?.online_min ?? 0) + (accrued?.online_min ?? 0);
+
     res.json({
       period,
-      total: num(r.total),
+      total: Math.round((num(r.total) + onlineTime) * 100) / 100,
       orders: num(r.orders),
       distance_km: num(r.distance),
+      online_min: onlineMin,
       breakdown: {
         base: num(r.base),
         distance: num(r.distance_pay),
         surge: num(r.surge),
         tip: num(r.tip),
+        online_time: onlineTime,
       },
       wallet_balance: partner ? num(partner.dp_wallet_balance) : 0,
       chart: await dailyBars(dpId),

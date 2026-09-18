@@ -437,6 +437,53 @@ const TABLES = [
   CONSTRAINT \`store_promo_redemptions_ibfk_2\` FOREIGN KEY (\`user_id\`) REFERENCES \`store_users\` (\`user_id\`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   },
+  // ── Rider online time and online pay ─────────────────────────────────
+  // See RIDER_ONLINE_PAY.md and util/presence/. Times are epoch milliseconds
+  // (BIGINT) so nothing between the phone, Node and MySQL converts timezones.
+  //
+  // A span is a run of the rider's 5-second location fixes no more than
+  // PRESENCE_GAP_MIN apart. A zero-length span ended "offline" is a go-offline
+  // marker (util/presence/spans.js). No foreign key to store_users: the ingest
+  // path is the hottest write in the app and the ids come from a verified token.
+  {
+    name: "store_rider_presence_spans",
+    ddl: `CREATE TABLE IF NOT EXISTS \`store_rider_presence_spans\` (
+  \`span_id\` bigint NOT NULL AUTO_INCREMENT,
+  \`dp_id\` int NOT NULL,
+  \`start_ms\` bigint NOT NULL,
+  \`end_ms\` bigint NOT NULL,
+  \`samples\` int NOT NULL DEFAULT '0',
+  \`end_reason\` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  \`start_lat\` decimal(10,7) DEFAULT NULL,
+  \`start_lng\` decimal(10,7) DEFAULT NULL,
+  \`end_lat\` decimal(10,7) DEFAULT NULL,
+  \`end_lng\` decimal(10,7) DEFAULT NULL,
+  \`updated_ms\` bigint NOT NULL DEFAULT '0',
+  PRIMARY KEY (\`span_id\`),
+  KEY \`rps_partner_end_idx\` (\`dp_id\`,\`end_ms\`) USING BTREE,
+  KEY \`rps_end_idx\` (\`end_ms\`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+  },
+  // One row per rider per IST day: what their online time was worth and what
+  // has been credited. Unique on (dp_id, pay_date) so a day is never paid twice;
+  // a late-synced backlog pays only the difference. txn_ids lists every wallet
+  // entry written for the day, for audit.
+  {
+    name: "store_rider_online_pay",
+    ddl: `CREATE TABLE IF NOT EXISTS \`store_rider_online_pay\` (
+  \`pay_id\` int NOT NULL AUTO_INCREMENT,
+  \`dp_id\` int NOT NULL,
+  \`pay_date\` date NOT NULL,
+  \`online_min\` int NOT NULL DEFAULT '0',
+  \`rate_per_hour\` decimal(10,2) NOT NULL,
+  \`paid_paise\` int NOT NULL DEFAULT '0',
+  \`txn_ids\` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  \`updated_ms\` bigint NOT NULL DEFAULT '0',
+  PRIMARY KEY (\`pay_id\`),
+  UNIQUE KEY \`rop_partner_day_uq\` (\`dp_id\`,\`pay_date\`),
+  KEY \`rop_day_idx\` (\`pay_date\`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+  },
 ];
 
 /**
@@ -537,6 +584,14 @@ const COLUMNS = [
   { table: "store_user_notifications", column: "image", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `image` VARCHAR(255) NULL" },
   { table: "store_user_notifications", column: "ref_business_user_id", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `ref_business_user_id` INT NULL" },
   { table: "store_user_notifications", column: "ref_promo_code", sql: "ALTER TABLE `store_user_notifications` ADD COLUMN `ref_promo_code` VARCHAR(24) NULL" },
+
+  // Shift completion, measured from presence spans (util/presence/shifts.js).
+  // Deliberately NOT named on the DeliveryShift model: a model column is in
+  // every SELECT, and would break the shift screens on a database that has not
+  // migrated yet. Read and written with raw SQL instead.
+  { table: "store_delivery_shifts", column: "offline_min", sql: "ALTER TABLE `store_delivery_shifts` ADD COLUMN `offline_min` INT NULL" },
+  { table: "store_delivery_shifts", column: "completion", sql: "ALTER TABLE `store_delivery_shifts` ADD COLUMN `completion` VARCHAR(16) NULL" },
+  { table: "store_delivery_shifts", column: "evaluated_ms", sql: "ALTER TABLE `store_delivery_shifts` ADD COLUMN `evaluated_ms` BIGINT NULL" },
 
 ];
 

@@ -18,6 +18,7 @@ const performance = require("../controllers/deliveryPerformance");
 const documents = require("../controllers/deliveryDocuments");
 const notifications = require("../controllers/deliveryNotifications");
 const devices = require("../controllers/deliveryDevices");
+const presence = require("../controllers/deliveryPresence");
 
 const router = express.Router();
 
@@ -37,6 +38,12 @@ router.get("/home/summary", status.getSummary);
 // Going online requires an approved account.
 router.post("/status/online", requireApproved, status.setOnline);
 router.post("/status/location", status.updateLocation);
+
+// Online time. The app streams 5-second location samples over the WebSocket at
+// /delivery/presence/ws (util/presence/socket.js); this is the same ingest for
+// when a socket cannot be opened, and the read behind "online today".
+router.post("/presence/samples", presence.uploadSamples);
+router.get("/presence/today", presence.today);
 
 // ── Orders (the delivery flow) ─────────────────────────────────────
 router.get("/orders/incoming", orders.getIncoming);

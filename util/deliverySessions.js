@@ -194,8 +194,40 @@ async function sessionsForDay(dpId, date) {
   });
 }
 
-/** Day / week (Mon–Sun) / month totals around a reference date. */
+/**
+ * Day / week (Mon–Sun) / month online totals around a reference date.
+ *
+ * Measured from presence spans (util/presence/) — the 5-second location
+ * samples with the 5-minute gap rule, the same numbers online pay is computed
+ * from — in IST calendar days. Falls back to the toggle-based sessions below
+ * only where the presence table does not exist yet.
+ */
 async function activeTotals(dpId, ref = new Date()) {
+  try {
+    const { istDateOf, istDayBounds, istAddDays } = require("./presence/config");
+    const { spansBetween } = require("./presence/shifts");
+    const { onlineMinutesIn } = require("./presence/spans");
+    const refMs = new Date(ref).getTime();
+    const nowMs = Math.min(Date.now(), refMs + 86_400_000);
+    const today = istDateOf(refMs);
+    const dow = (new Date(`${today}T12:00:00+05:30`).getUTCDay() + 6) % 7; // 0 = Monday
+    const monday = istAddDays(today, -dow);
+    const monthStart = `${today.slice(0, 8)}01`;
+    const from = Math.min(istDayBounds(monday).startMs, istDayBounds(monthStart).startMs);
+    const spans = await spansBetween(dpId, from, nowMs);
+    const upTo = (date, days) => Math.min(nowMs, istDayBounds(istAddDays(date, days - 1)).endMs);
+    return {
+      day_min: onlineMinutesIn(spans, istDayBounds(today).startMs, upTo(today, 1)),
+      week_min: onlineMinutesIn(spans, istDayBounds(monday).startMs, upTo(monday, 7)),
+      month_min: onlineMinutesIn(spans, istDayBounds(monthStart).startMs, nowMs),
+    };
+  } catch {
+    return legacyActiveTotals(dpId, ref);
+  }
+}
+
+/** Session-based totals, for a database without presence spans. */
+async function legacyActiveTotals(dpId, ref = new Date()) {
   const d = new Date(ref);
   const monday = new Date(d);
   monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
