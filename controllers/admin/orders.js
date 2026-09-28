@@ -208,6 +208,11 @@ const withPeople = async (rows) => {
     ...o,
     customer_name: byId[o.customer_id]?.user_name || null,
     customer_phone: byId[o.customer_id]?.user_phone || null,
+    // The second number on the account (store_users.user_phone_1). Customers
+    // give one when the first is a number they do not answer on the road, and
+    // staff chasing a delivery need it — it was fetched here all along and
+    // simply never passed on.
+    customer_phone_alt: byId[o.customer_id]?.user_phone_1 || null,
     vendor_name: bizById[o.vendor_id] || byId[o.vendor_id]?.user_name || null,
     // The store's number, as the PHP invoice printed it under the store's name
     // (store_users.user_phone_1, the shop line), falling back to the account's.
@@ -221,6 +226,7 @@ const serialize = (o) => ({
   customer_id: o.customer_id,
   customer_name: o.customer_name,
   customer_phone: o.customer_phone,
+  customer_phone_alt: o.customer_phone_alt,
   vendor_id: o.vendor_id,
   vendor_name: o.vendor_name,
   vendor_phone: o.vendor_phone,
