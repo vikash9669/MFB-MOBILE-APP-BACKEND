@@ -558,6 +558,23 @@ const COLUMNS = [
   { table: "store_delivery_orders", column: "offer_round", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `offer_round` SMALLINT NULL DEFAULT 0" },
   { table: "store_delivery_orders", column: "dispatch_note", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `dispatch_note` VARCHAR(255) NULL" },
   { table: "store_delivery_orders", column: "batch_id", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `batch_id` INT NULL" },
+
+  // A rider handing a job back: why, and what they photographed.
+  //
+  // On the job rather than a table of their own because there is at most one
+  // live cancellation per job — the moment it is handed back the job returns to
+  // the pool, and the next rider's cancellation describes a different attempt.
+  // The permanent trail is store_delivery_order_events, which keeps every one.
+  { table: "store_delivery_orders", column: "cancel_reason", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `cancel_reason` VARCHAR(80) NULL" },
+  { table: "store_delivery_orders", column: "cancel_note", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `cancel_note` VARCHAR(255) NULL" },
+  // LONGTEXT for the same reason proof_photo is: a base64 JPEG blows past TEXT.
+  { table: "store_delivery_orders", column: "cancel_photo", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `cancel_photo` LONGTEXT NULL" },
+  { table: "store_delivery_orders", column: "cancelled_by_dp_id", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `cancelled_by_dp_id` INT NULL" },
+  { table: "store_delivery_orders", column: "cancelled_at", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `cancelled_at` DATETIME NULL" },
+  // True when the rider was already holding the food. A job handed back after
+  // pickup must not be offered to somebody else automatically — the restaurant
+  // has nothing left to give them.
+  { table: "store_delivery_orders", column: "cancelled_after_pickup", sql: "ALTER TABLE `store_delivery_orders` ADD COLUMN `cancelled_after_pickup` TINYINT(1) NOT NULL DEFAULT 0" },
   { table: "store_users", column: "dp_max_concurrent", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_max_concurrent` TINYINT NULL DEFAULT 1" },
   { table: "store_users", column: "dp_last_offer_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_last_offer_at` DATETIME NULL" },
   { table: "store_users", column: "dp_location_at", sql: "ALTER TABLE `store_users` ADD COLUMN `dp_location_at` DATETIME NULL" },

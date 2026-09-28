@@ -179,6 +179,27 @@ const riderAssigned = guard("assigned", async (orderId, riderName) => {
   });
 });
 
+// 3b. The rider who was bringing it has handed the job back.
+//
+//     Deliberately vague about the rider: "your partner cancelled" invites a
+//     complaint about a person the customer never met, and the only thing they
+//     can act on is how long it will now take. The tracking screen reverts to
+//     "finding a rider" on its own — see util/orderTracking.js — so this exists
+//     to stop somebody watching a stalled screen with no idea anything changed.
+const riderDropped = guard("rider_dropped", async (orderId, { requeued } = {}) => {
+  const ctx = await loadOrderContext(orderId);
+  if (!ctx) return null;
+  return send(ctx, {
+    stage: "assigned",
+    icon: "two_wheeler",
+    title: "Finding you another delivery partner",
+    body: requeued
+      ? `Your delivery partner couldn't complete this one, so we're assigning your order${fromRestaurant(ctx)} to somebody else.`
+      : `Your delivery partner couldn't complete this one. Our team is sorting out your order${fromRestaurant(ctx)} now.`,
+    image: ctx.restaurantImage,
+  });
+});
+
 // 4. The food is in the bag and moving.
 const orderPickedUp = guard("picked_up", async (orderId, riderName) => {
   const ctx = await loadOrderContext(orderId);
@@ -288,6 +309,7 @@ module.exports = {
   orderPlaced,
   orderAccepted,
   riderAssigned,
+  riderDropped,
   orderPickedUp,
   riderNearby,
   orderDelivered,

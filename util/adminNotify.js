@@ -355,6 +355,97 @@ async function notifyAdminsNoRider({ orderId, doId, pickup, dropArea, minutesWai
   }
 }
 
+/**
+ * A rider has handed a job back mid-delivery.
+ *
+ * Forced on for the panel bell, the live event and email regardless of
+ * ORDER_ESCALATION_CHANNELS, on the same reasoning as notifyAdminsNoRider: a
+ * customer is waiting for food that currently has nobody bringing it, and the
+ * longer that goes unseen the worse it gets. SMS still follows the channel
+ * config, because that one rings personal phones at 1am.
+ *
+ * `afterPickup` is the part staff must not miss. Before pickup the engine simply
+ * looks for somebody else; after pickup the food is in the bag of a rider who
+ * has just stopped delivering it, and no amount of re-dispatch fixes that.
+ */
+async function notifyAdminsRiderCancelled({
+  orderId,
+  doId,
+  riderName,
+  riderPhone,
+  reason,
+  note,
+  afterPickup,
+  hasPhoto,
+  requeued,
+}) {
+  try {
+    const who = riderName || "A rider";
+    const title = `Order #${orderId} — rider cancelled`;
+    const body =
+      `${who} dropped this delivery: ${reason}.` +
+      (afterPickup
+        ? " They had ALREADY COLLECTED the food — assign someone by hand."
+        : requeued
+          ? " Looking for another rider now."
+          : " It is waiting for a rider.");
+
+    const channels = escalationChannels();
+    channels.add("panel");
+    channels.add("realtime");
+    channels.add("email");
+
+    return await fanOut({
+      channels,
+      mailEnvVar: "ORDER_ALERT_EMAILS",
+      notification: {
+        title,
+        body,
+        // A cancellation after pickup is the one a human has to act on now, so
+        // it gets the error icon rather than the neutral one the bell shows for
+        // a job that is already being re-offered.
+        icon: afterPickup ? "error" : "no_transfer",
+        refOrderId: orderId,
+      },
+      event: "delivery.cancelled",
+      payload: {
+        order_id: orderId,
+        do_id: doId,
+        rider: who,
+        reason,
+        after_pickup: Boolean(afterPickup),
+        requeued: Boolean(requeued),
+        title,
+        body,
+      },
+      mail: () => ({
+        subject: `${afterPickup ? "🚨" : "🛵"} Order #${orderId} — ${escapeHtml(who)} cancelled the delivery`,
+        html:
+          `<p><strong>${escapeHtml(who)}</strong>${riderPhone ? ` (${escapeHtml(riderPhone)})` : ""} has ` +
+          `cancelled the delivery of order #${orderId}.</p>` +
+          `<p><strong>Reason:</strong> ${escapeHtml(reason)}</p>` +
+          (note ? `<p><strong>They added:</strong> ${escapeHtml(note)}</p>` : "") +
+          (afterPickup
+            ? '<p style="color:#b00020"><strong>The food had already been collected.</strong> ' +
+              "The restaurant has nothing left to hand a replacement rider, so this one needs " +
+              "a person: get the order back, or have it remade.</p>"
+            : requeued
+              ? "<p>The job has gone back into dispatch and other riders are being offered it.</p>"
+              : "<p>The job is waiting in the panel's unassigned list.</p>") +
+          (hasPhoto ? "<p>The rider attached a photo — it is on the order screen.</p>" : "") +
+          `<p><a href="${orderUrl(orderId)}">Open the order</a></p>`,
+      }),
+      sms: () =>
+        `Order #${orderId}: ${who} cancelled the delivery (${reason}).` +
+        (afterPickup ? " FOOD ALREADY COLLECTED — needs a human." : "") +
+        `\n${orderUrl(orderId)}`,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ notifyAdminsRiderCancelled ~", err.message);
+    return { panel: 0, realtime: 0, email: null, sms: null, channels: [], error: err.message };
+  }
+}
+
 /** An order was auto-cancelled. Whether the money went back is the headline. */
 async function notifyAdminsOrderCancelled({ orderId, shop, refunded, amount }) {
   try {
@@ -555,6 +646,7 @@ module.exports = {
   notifyAdminsOrderStuck,
   notifyAdminsOrderFinalWarning,
   notifyAdminsNoRider,
+  notifyAdminsRiderCancelled,
   notifyAdminsOrderCancelled,
   notifyAdminsPaymentMismatch,
   notifyAdminsPaymentsStuck,

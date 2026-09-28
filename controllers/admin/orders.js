@@ -60,6 +60,45 @@ async function recalcOrderTotals(orderId, transaction) {
   return order;
 }
 
+const CANCELLED = STATUS_LABELS.indexOf("Cancelled");
+
+/**
+ * Why this status move is refused, or null when it is allowed.
+ *
+ * An order moves one step at a time and only forwards. Before this, the admin
+ * screen accepted any of the seven as a direct write, so an order could go from
+ * Received to Delivered without a vendor ever seeing it, or be rewound to
+ * Received after a rider had collected it — and every one of those writes was
+ * committed and logged, leaving the panel, the vendor portal and the rider app
+ * describing different orders.
+ *
+ * Cancelled is deliberately exempt in both directions of the rule: an order that
+ * has to be killed while it is already on the way needs a route out, and the
+ * alternative is someone editing store_orders by hand.
+ *
+ * Mirrored in the panel at src/panel/lib/orderStatus.ts, which greys out the
+ * buttons this would refuse. The two are meant to say the same thing, so a
+ * change here needs the same change there.
+ */
+function statusTransitionRefusal(current, target) {
+  if (current === CANCELLED) {
+    return "This order was cancelled, so its status can no longer change.";
+  }
+  if (target === CANCELLED) return null;
+  if (target === current) return "The order is already at this status.";
+  if (target < current) {
+    return `An order cannot go back to ${label(target)} once it has reached ${label(current)}.`;
+  }
+  if (target > current + 1) {
+    return `${label(current + 1)} comes next — the steps have to be taken one at a time.`;
+  }
+  return null;
+}
+
+// Exported for tests: a pure decision worth testing without a database or an
+// HTTP request behind it.
+exports._statusTransitionRefusal = statusTransitionRefusal;
+
 /** Appends to store_orders_log, as every PHP status write did. */
 async function logStatus(orderId, userId, status, transaction) {
   await StoreOrderLogs.create(
@@ -337,9 +376,53 @@ exports.detail = async (req, res) => {
       console.log("MFB ~ admin order detail ~ collection lookup ~", err.message);
     }
 
+    // The last rider to hand this job back, if any.
+    //
+    // Read from the job rather than the timeline because the photo and the
+    // reason live there, and because "is anybody bringing this right now" is
+    // the question staff open this screen to answer. Cleared implicitly when a
+    // new rider accepts and the columns are overwritten by the next hand-back.
+    let riderCancellation = null;
+    try {
+      const [row] = await sequelize.query(
+        `SELECT d.\`do_id\`, d.\`cancel_reason\`, d.\`cancel_note\`, d.\`cancelled_at\`,
+                d.\`cancelled_after_pickup\`, d.\`status\` AS job_status,
+                d.\`dispatch_state\`, d.\`dp_id\`,
+                d.\`cancel_photo\` IS NOT NULL AS has_photo,
+                u.\`user_name\` AS rider_name, u.\`user_phone\` AS rider_phone
+           FROM \`store_delivery_orders\` d
+           LEFT JOIN \`store_users\` u ON u.\`user_id\` = d.\`cancelled_by_dp_id\`
+          WHERE d.\`source_order_id\` = :id AND d.\`cancelled_at\` IS NOT NULL
+          ORDER BY d.\`cancelled_at\` DESC LIMIT 1`,
+        { replacements: { id: order.order_id }, type: QueryTypes.SELECT }
+      );
+      if (row) {
+        riderCancellation = {
+          do_id: row.do_id,
+          reason: row.cancel_reason,
+          note: row.cancel_note,
+          at: row.cancelled_at,
+          after_pickup: Boolean(Number(row.cancelled_after_pickup)),
+          // Only whether one exists — a base64 JPEG has no business riding
+          // along with every order detail poll. The panel fetches it on demand.
+          has_photo: Boolean(Number(row.has_photo)),
+          rider_name: row.rider_name,
+          rider_phone: row.rider_phone,
+          // True while nobody has picked the job up since.
+          still_unassigned: row.dp_id == null && row.job_status === "offered",
+          dispatch_state: row.dispatch_state,
+        };
+      }
+    } catch (err) {
+      // Pre-migration databases have no cancel_* columns; the rest of the
+      // screen must still render.
+      console.log("MFB ~ admin order detail ~ rider cancellation ~", err.message);
+    }
+
     res.json({
       order: serialize(decorated),
       payment_collection: paymentCollection,
+      rider_cancellation: riderCancellation,
       items: items.map((i) => ({
         order_detail_id: i.order_detail_id,
         product_id: i.product_id,
@@ -385,6 +468,30 @@ exports.detail = async (req, res) => {
   }
 };
 
+// GET /admin/orders/:id/cancel-photo — the photo a rider attached when they
+// handed this job back.
+//
+// Its own endpoint because it is a base64 JPEG: shipping it inside the order
+// detail would put ~200KB on every poll of a screen that refreshes every 12
+// seconds, for a picture almost nobody opens.
+exports.cancelPhoto = async (req, res) => {
+  try {
+    const [row] = await sequelize.query(
+      `SELECT \`cancel_photo\` FROM \`store_delivery_orders\`
+        WHERE \`source_order_id\` = :id AND \`cancel_photo\` IS NOT NULL
+        ORDER BY \`cancelled_at\` DESC LIMIT 1`,
+      { replacements: { id: req.params.id }, type: QueryTypes.SELECT }
+    );
+    if (row?.cancel_photo == null) {
+      return res.status(404).json({ message: "No photo on this cancellation" });
+    }
+    res.json({ photo: row.cancel_photo });
+  } catch (err) {
+    console.log("MFB-error-logs ~ admin cancel photo ~ err:", err.message);
+    res.status(500).json({ message: "Failed to load the photo" });
+  }
+};
+
 // PUT /admin/orders/:id/status  { status, rider_id }  — Orders::OrderUpdate.
 //
 // Both fields are optional and either may appear alone. The PHP treated an
@@ -426,6 +533,28 @@ exports.updateStatus = async (req, res) => {
     if (order == null) {
       await transaction.rollback();
       return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Only an explicit status write is policed, and only against where the
+    // order actually is right now — which is why it happens here, inside the
+    // transaction, rather than against whatever the panel last rendered.
+    //
+    // A rider assignment is not a status menu click: it bumps a still
+    // unprocessed order to 2 on its own (just below), and the rider app, the
+    // dispatch engine and the auto-cancel sweeper move orders through their own
+    // routes. None of those go through this branch, so none of them change.
+    if (hasStatus) {
+      const refusal = statusTransitionRefusal(Number(order.order_status), status);
+      if (refusal) {
+        await transaction.rollback();
+        // 409, not 403: whoever asked is allowed to move this order, the order
+        // has just moved on (or not far enough) since their screen was drawn.
+        return res.status(409).json({
+          message: refusal,
+          status: Number(order.order_status),
+          status_label: label(order.order_status),
+        });
+      }
     }
 
     // Assigning a rider to an order nobody has picked up yet moves it forward,

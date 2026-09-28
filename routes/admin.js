@@ -195,6 +195,8 @@ router.get("/lookups", orders.lookups);
 router.get("/orders", orders.list);
 router.get("/orders/reports", orders.reports);
 router.get("/orders/:id", orders.detail);
+// Fetched on demand — see controllers/admin/orders.js cancelPhoto.
+router.get("/orders/:id/cancel-photo", orders.cancelPhoto);
 router.get("/orders/:id/catalogue", orders.orderCatalogue);
 router.put("/orders/:id/status", orders.updateStatus);
 router.put("/orders/:id/payment", orders.updatePayment);

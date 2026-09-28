@@ -83,6 +83,15 @@ const DeliveryOrder = sequelize.define(
     // Proof-of-delivery photo reference (data URI / URL / storage key).
     // LONGTEXT: base64 proof photo exceeds TEXT's 64KB cap.
     proof_photo: { type: DataTypes.TEXT("long"), allowNull: true },
+    // ── Rider hand-back ──────────────────────────────────────────────
+    // Set when a rider cancels a job they had accepted; cleared by the next
+    // rider's accept. See controllers/deliveryOrders.js cancelDelivery.
+    cancel_reason: { type: DataTypes.STRING(80), allowNull: true },
+    cancel_note: { type: DataTypes.STRING(255), allowNull: true },
+    cancel_photo: { type: DataTypes.TEXT("long"), allowNull: true },
+    cancelled_by_dp_id: { type: DataTypes.INTEGER, allowNull: true },
+    cancelled_at: { type: DataTypes.DATE, allowNull: true },
+    cancelled_after_pickup: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     // ── Timestamps ───────────────────────────────────────────────────
     offered_at: { type: DataTypes.DATE, allowNull: false, defaultValue: NOW },
     accepted_at: { type: DataTypes.DATE, allowNull: true },

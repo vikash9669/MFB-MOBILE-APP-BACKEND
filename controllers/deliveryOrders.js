@@ -21,6 +21,7 @@ const { startCollection, checkCollection } = require("../util/codCollection");
 const { sendDeliveryOtp } = require("../util/customerAlerts");
 const { isDevCode } = require("../util/otp");
 const { syncFromDelivery } = require("../util/orderStatusSync");
+const { notifyAdminsRiderCancelled } = require("../util/adminNotify");
 const {
   acceptOffer,
   rejectOffer,
@@ -683,6 +684,282 @@ exports.verifyDelivery = async (req, res) => {
 // POST /delivery/orders/:id/report-issue — the rider flags a problem with the
 // active job (customer unreachable, wrong address, …). Logs it to the order
 // timeline and raises a notification; support follows up out of band.
+
+// ── Rider hand-back helpers ────────────────────────────────────────────
+
+// The placeholder store_orders.rider_id carries when nobody is assigned — the
+// value util/orders.js writes at placement and controllers/admin/notify.js
+// tests against. Same constant, spelled out here rather than imported, because
+// importing the notify controller from here would close a require cycle.
+const UNASSIGNED_RIDER_ID = 1;
+
+/**
+ * Undoes the panel's half of an assignment when the rider walks away.
+ *
+ * store_orders.rider_id is what the admin Orders list and its emails read. It
+ * is set when an admin assigns from the panel, and a delivery partner is the
+ * same store_users row as the panel rider (dp_id maps to user_id — see
+ * models/delivery_partner.js), so the two ids compare directly.
+ *
+ * Only clears a rider_id that names THIS rider: an admin may have assigned
+ * somebody else since, and overwriting that would silently undo their decision.
+ *
+ * "Cleared" means back to the placeholder 1, NOT NULL. store_orders.rider_id is
+ * NOT NULL DEFAULT 1 and 1 is what util/orders.js writes at placement, which is
+ * how controllers/admin/notify.js recognises an unassigned order. Writing NULL
+ * looks right and is not: MySQL coerces it to 0 on this column, and 0 is not
+ * the placeholder, so the order would read as assigned to a user that does not
+ * exist — no rider mail, no rider on the panel, and nothing to explain it.
+ *
+ * Also walks the order back from "On the Way" to "Ready to Ship" when the food
+ * had been collected, because nothing is on the way any more. That is the one
+ * place in the codebase that moves an order backwards, and it is deliberate:
+ * orderStatusSync only ever moves forward, so without this the panel would go
+ * on showing a delivery in progress that nobody is performing.
+ */
+async function releasePanelAssignment(sourceOrderId, dpId, afterPickup) {
+  if (!sourceOrderId) return { cleared: 0 };
+
+  const [, cleared] = await sequelize.query(
+    `UPDATE \`store_orders\` SET \`rider_id\` = :unassigned
+      WHERE \`order_id\` = :orderId AND \`rider_id\` = :dpId`,
+    {
+      replacements: { orderId: sourceOrderId, dpId, unassigned: UNASSIGNED_RIDER_ID },
+      type: QueryTypes.UPDATE,
+    }
+  );
+
+  if (afterPickup) {
+    await sequelize.query(
+      `UPDATE \`store_orders\` SET \`order_status\` = :readyToShip
+        WHERE \`order_id\` = :orderId AND \`order_status\` = :onTheWay`,
+      {
+        replacements: { orderId: sourceOrderId, readyToShip: 3, onTheWay: 4 },
+        type: QueryTypes.UPDATE,
+      }
+    );
+  }
+
+  return { cleared: Number(cleared ?? 0) };
+}
+
+/**
+ * Where a handed-back job goes next.
+ *
+ * Before pickup the restaurant still holds the food, so the engine can simply
+ * offer it to somebody else ('searching'). After pickup it cannot: the bag is
+ * with the rider who just walked away, and sending a second rider to the
+ * counter wastes their trip. Those park at 'failed', which is exactly what the
+ * panel's unassigned list selects on — see controllers/admin/dispatch.js.
+ */
+const dispatchStateAfterCancel = (afterPickup) => (afterPickup ? "failed" : "searching");
+
+/**
+ * Cancellations as a percentage of the jobs a rider committed to.
+ *
+ * One decimal place, and 0 when they have no history at all — a first-ever job
+ * handed back should not read as "100% cancellation rate" on the performance
+ * screen, which is what dividing by their one job would say.
+ */
+const cancellationPct = (cancelled, delivered) => {
+  const committed = Number(cancelled || 0) + Number(delivered || 0);
+  if (committed === 0) return 0;
+  return Math.round((Number(cancelled || 0) / committed) * 1000) / 10;
+};
+
+/**
+ * Recomputes the rider's cancellation rate from their own history.
+ *
+ * Derived rather than incremented: a counter needs every writer to agree and
+ * nothing else in this codebase maintains these columns yet (they are display
+ * fields, seeded by util/deliveryDemo.js). Counting the rows each time cannot
+ * drift, and at a rider's lifetime volume it is two indexed counts.
+ *
+ * The denominator is "jobs this rider committed to" — the ones they saw through
+ * plus the ones they handed back. Offers they never accepted belong to the
+ * acceptance rate, which is a different number about a different decision.
+ */
+async function recordCancellation(dpId) {
+  const [row] = await sequelize.query(
+    `SELECT
+       (SELECT COUNT(*) FROM \`store_delivery_order_events\`
+         WHERE \`dp_id\` = :dpId AND \`status\` = 'cancelled_by_rider') AS cancelled,
+       (SELECT COUNT(*) FROM \`store_delivery_orders\`
+         WHERE \`dp_id\` = :dpId AND \`status\` = 'delivered') AS delivered`,
+    { replacements: { dpId }, type: QueryTypes.SELECT }
+  );
+
+  const pct = cancellationPct(row?.cancelled, row?.delivered);
+  if (pct === 0 && !Number(row?.cancelled || 0)) return { pct: 0 };
+
+  await DeliveryPartner.update({ dp_cancellation_pct: pct }, { where: { dp_id: dpId } });
+  return { pct };
+}
+
+// POST /delivery/orders/:id/cancel — a rider hands a job back.
+//
+// Distinct from reject, which declines an offer nobody has taken yet and costs
+// the customer nothing. This one fires after the rider committed: somebody is
+// waiting for food that, as of this call, has nobody bringing it. So the job
+// goes back to the pool, an admin is told immediately, and the customer hears
+// that a new rider is being found.
+//
+// WHAT HAPPENS TO THE JOB depends on whether the food had been collected:
+//
+//   before pickup   dispatch_state 'searching' — the restaurant still holds the
+//                   order, so the engine simply offers it to somebody else and
+//                   the customer may never notice.
+//   after pickup    dispatch_state 'failed' — the food is in the bag of the
+//                   rider who just stopped delivering it. Offering that job to
+//                   another rider sends them to a counter with nothing on it,
+//                   so it parks in the panel's unassigned list where a person
+//                   decides: recover the bag, or have the kitchen remake it.
+//
+// The rider's own claim is released either way — leaving dp_id set would keep
+// the job on their active screen and block them from taking anything else.
+exports.cancelDelivery = async (req, res) => {
+  try {
+    const dpId = req.user.dp_id;
+    const reason = String(req.body?.reason || "").trim();
+    const note = String(req.body?.note || "").trim();
+    const photo = req.body?.photo || null;
+
+    if (!reason) {
+      return res.status(400).json({ message: "Pick a reason for cancelling" });
+    }
+
+    const order = await DeliveryOrder.findByPk(req.params.id);
+    if (order == null || order.dp_id !== dpId) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Only a job this rider is actually carrying can be handed back. An offer
+    // they have not accepted is a reject; a delivered one is history.
+    if (!["accepted", "picked_up"].includes(order.status)) {
+      return res.status(409).json({
+        message:
+          order.status === "delivered"
+            ? "This order has already been delivered."
+            : "This order is no longer yours to cancel.",
+      });
+    }
+
+    const afterPickup = order.status === "picked_up";
+
+    // The claim is released with a conditional UPDATE for the same reason
+    // accept takes one: the engine may be mid-tick on this very job, and a
+    // check-then-write would let both hands move it.
+    const [, released] = await sequelize.query(
+      `UPDATE \`store_delivery_orders\`
+          SET \`status\` = 'offered', \`dp_id\` = NULL, \`accepted_at\` = NULL,
+              \`picked_up_at\` = NULL,
+              \`dispatch_state\` = :dispatchState, \`dispatch_at\` = UTC_TIMESTAMP(),
+              \`dispatch_note\` = :note,
+              \`cancel_reason\` = :reason, \`cancel_note\` = :riderNote,
+              \`cancel_photo\` = :photo, \`cancelled_by_dp_id\` = :dpId,
+              \`cancelled_at\` = UTC_TIMESTAMP(),
+              \`cancelled_after_pickup\` = :afterPickup
+        WHERE \`do_id\` = :doId AND \`dp_id\` = :dpId
+          AND \`status\` IN ('accepted', 'picked_up')`,
+      {
+        replacements: {
+          doId: order.do_id,
+          dpId,
+          dispatchState: dispatchStateAfterCancel(afterPickup),
+          note: `rider cancelled: ${reason}`.slice(0, 255),
+          reason: reason.slice(0, 80),
+          riderNote: note ? note.slice(0, 255) : null,
+          photo: photo || null,
+          afterPickup: afterPickup ? 1 : 0,
+        },
+        type: QueryTypes.UPDATE,
+      }
+    );
+
+    if (Number(released ?? 0) === 0) {
+      // Something else moved the job between the read and the write — most
+      // likely the rider tapping twice, or an admin reassigning it.
+      return res.status(409).json({ message: "This order is no longer yours to cancel." });
+    }
+
+    // Withdraw any offer rows still pointing at this rider, so the engine does
+    // not count a settled offer as live and skip the next round.
+    if (await dispatchReady()) {
+      await sequelize
+        .query(
+          `UPDATE \`store_delivery_offers\` SET \`state\` = 'withdrawn'
+            WHERE \`do_id\` = :doId AND \`state\` = 'pending'`,
+          { replacements: { doId: order.do_id }, type: QueryTypes.UPDATE }
+        )
+        .catch((e) => console.log("MFB ~ cancelDelivery ~ withdraw offers ~", e.message));
+    }
+
+    await logOrderEvent(
+      order.do_id,
+      dpId,
+      "cancelled_by_rider",
+      `${reason}${note ? ` — ${note}` : ""}${afterPickup ? " (after pickup)" : ""}`.slice(0, 255)
+    );
+
+    // The panel's own copy of the assignment. store_orders.rider_id is set when
+    // an admin assigns from the panel, and it is what the Orders list shows —
+    // left alone it would name a rider who has just walked away. The order also
+    // goes back from "On the Way" to "Ready to Ship" when the job had been
+    // picked up, because nothing is on the way any more.
+    await releasePanelAssignment(order.source_order_id, dpId, afterPickup).catch((e) =>
+      console.log("MFB ~ cancelDelivery ~ panel release ~", e.message)
+    );
+
+    // Everything past here is a side effect: the hand-back is committed, and a
+    // failed push or a dead SMTP host must not turn it into an error the rider
+    // retries.
+    notifyPartner(dpId, {
+      category: "orders",
+      icon: "cancel",
+      title: `Cancelled · Order #${order.order_ref}`,
+      body: "This delivery has been handed back. Our team has been notified.",
+      data: { type: "order_cancelled_by_rider", do_id: order.do_id },
+    }).catch(() => {});
+
+    notifyAdminsRiderCancelled({
+      orderId: order.source_order_id,
+      doId: order.do_id,
+      riderName: req.user?.dp_name,
+      riderPhone: req.user?.dp_phone,
+      reason,
+      note,
+      afterPickup,
+      hasPhoto: Boolean(photo),
+      requeued: !afterPickup,
+    }).catch((e) => console.log("MFB ~ cancelDelivery ~ admin alert ~", e.message));
+
+    orderCustomerNotify
+      .riderDropped(order.source_order_id, { requeued: !afterPickup })
+      .catch(() => {});
+
+    // Count it against the rider. Deliberately after the alerts: a stats write
+    // that fails must not cost the office its warning.
+    recordCancellation(dpId).catch((e) =>
+      console.log("MFB ~ cancelDelivery ~ stats ~", e.message)
+    );
+
+    res.json({
+      message: afterPickup
+        ? "Delivery cancelled. Our team will call you about the order you are holding."
+        : "Delivery cancelled. The order has gone back to other partners.",
+      requeued: !afterPickup,
+    });
+  } catch (err) {
+    console.log("MFB-error-logs ~ delivery cancelDelivery ~ err:", err);
+    res.status(500).json({ message: "Failed to cancel this delivery" });
+  }
+};
+
+// Exported for tests: the two decisions in the hand-back worth pinning down
+// without a database behind them.
+exports._dispatchStateAfterCancel = dispatchStateAfterCancel;
+exports._cancellationPct = cancellationPct;
+
 exports.reportIssue = async (req, res) => {
   try {
     const dpId = req.user.dp_id;

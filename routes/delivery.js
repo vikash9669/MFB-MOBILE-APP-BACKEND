@@ -66,6 +66,9 @@ router.get("/orders/:id/collect", orders.collectStatus);
 router.post("/orders/:id/verify-pickup", deliveryCode, orders.verifyPickup);
 router.post("/orders/:id/verify-delivery", deliveryCode, orders.verifyDelivery);
 router.post("/orders/:id/report-issue", orders.reportIssue);
+// Handing a job back mid-delivery — heavier than report-issue, which only logs:
+// this one releases the job, alerts the office and tells the customer.
+router.post("/orders/:id/cancel", orders.cancelDelivery);
 
 // ── Earnings ───────────────────────────────────────────────────────
 router.get("/earnings", earnings.getEarnings);
